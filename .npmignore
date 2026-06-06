@@ -1,0 +1,13 @@
+/node_modules
+/target
+/src
+/.vscode
+/.gitignore
+/build.sh
+/Cargo.lock
+/Cargo.toml
+/package-lock.json
+/tsconfig.json
+/binary
+/test
+/scripts
