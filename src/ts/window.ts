@@ -128,9 +128,16 @@ const RPC_BRIDGE_SCRIPT = `
     },
 
     // ===== 内部：处理 host 发给 webview 的消息 =====
+    // BUG FIX: 使用 setTimeout 延迟分发 handler，确保 _handleSend 脚本立即返回。
+    // 当 Host handler 中同时调用 messages（触发 _handleSend）和 return（触发 _resolve），
+    // 两者作为独立的 evaluateJavaScript 发往 WebKit。如果 handler 同步执行且命中
+    // debugger，JS 引擎暂停会阻塞后续 _resolve 脚本。用 setTimeout 将 handler 推迟到
+    // 独立 macrotask，_handleSend 立即返回后 _resolve 可正常执行。
     _handleSend: function(event, data) {
-      var mh = messageHandlers[event] || [];
-      mh.forEach(function(cb) { cb(data); });
+      setTimeout(function() {
+        var mh = messageHandlers[event] || [];
+        mh.forEach(function(cb) { cb(data); });
+      }, 0);
     }
   };
 })();
@@ -363,10 +370,8 @@ export default class BrowserWindow<T extends RPCInterface = any> {
    */
   sendToWebview(event: string, data?: any): void {
     const payload = JSON.stringify(data === undefined ? null : data)
-    // 用 setTimeout 包裹，使 _handleSend 在独立 macrotask 中执行，
-    // 避免 handler 中的 debugger 阻塞后续 evaluateJavaScript（如 _resolve）
     this.evaluateScript(
-      `setTimeout(function(){ window.__nodeWebview && window.__nodeWebview._handleSend(${JSON.stringify(event)}, ${payload}) }, 0)`
+      `window.__nodeWebview && window.__nodeWebview._handleSend(${JSON.stringify(event)}, ${payload})`
     )
   }
 

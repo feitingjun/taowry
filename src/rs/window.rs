@@ -61,8 +61,12 @@ impl BrowserWindow {
   }
 
   pub fn evaluate_script(&self, js: &str) -> wry::Result<()> {
-    // 使用 dummy callback 而非 NULL completionHandler，
-    // 确保 WKWebView 在 debugger 暂停期间也能可靠地排队和执行脚本
+    // BUG FIX: wry 的 evaluate_script (fire-and-forget) 内部传入 NULL 作为 WKWebView
+    // evaluateJavaScript:completionHandler: 的 completionHandler 参数。
+    // 当 JS 引擎被 debugger 暂停时，WKWebView 对 NULL handler 的 evaluateJavaScript 调用
+    // 处理不可靠 — 可能丢弃脚本或导致后续 evaluateJavaScript 调用无法排队。
+    // 改用 evaluate_script_with_callback 并传入非 NULL 的 dummy callback，
+    // 确保 WKWebView 在 debugger 暂停期间也能可靠地排队脚本，待恢复后依次执行。
     self.webview.evaluate_script_with_callback(js, |_| {})
   }
 
