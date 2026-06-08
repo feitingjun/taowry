@@ -1,4 +1,4 @@
-import { Rect, TrayIconEvent, TrayIconOptions, MenuOptions } from './types'
+import type { Rect, TrayIconEvent, TrayIconOptions, MenuOptions } from './types'
 import { getCurrentApplication } from './app'
 import { Menu } from './menu'
 
@@ -23,7 +23,7 @@ export class Tray {
         return app()._sendIoMessage({
           label,
           method: 'create_tray',
-          data: { ...options, menu: menuLabel },
+          data: { ...options, menu: menuLabel }
         })
       })
     } else {
@@ -31,7 +31,7 @@ export class Tray {
       this.created = app()._sendIoMessage({
         label,
         method: 'create_tray',
-        data: restOptions,
+        data: restOptions
       })
     }
   }

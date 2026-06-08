@@ -1,7 +1,7 @@
 import Application, { getCurrentApplication } from './app'
 import BrowserWindow from './window'
 import { Tray } from './tray'
-import { RPCInterface, DefineRPCConfig } from './types'
+import type { RPCInterface, DefineRPCConfig } from './types'
 
 /** 通过标签名获取已创建的窗口实例 */
 export const getWindow = <T extends RPCInterface = any>(label: string): BrowserWindow<T> | undefined => {

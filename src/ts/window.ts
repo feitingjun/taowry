@@ -1,4 +1,4 @@
-import {
+import type {
   BrowserWindowAttributes,
   CursorIcon,
   MenuOptions,
@@ -25,12 +25,11 @@ const RPC_BRIDGE_SCRIPT = `
 (function() {
   if (window.__nodeWebview) return;
   var counter = 0;
-  var callbacks = {};       // 调用 host 端的 pending callbacks
-  var rpcHandlers = {};     // host 调用 webview 的 request handlers
-  var messageHandlers = {}; // host 发给 webview 的消息监听
+  var callbacks = {};       // WebView→Host 请求的 pending callbacks
+  var rpcHandlers = {};     // Host→WebView 的 request handlers
+  var messageHandlers = {}; // Host→WebView 的消息监听
 
   window.__nodeWebview = {
-    // ===== defineRPC API =====
     defineRPC: function(config) {
       config = config || {};
       if (config.requests) {
@@ -52,7 +51,7 @@ const RPC_BRIDGE_SCRIPT = `
             return new Promise(function(resolve, reject) {
               var id = ++counter;
               callbacks[id] = { resolve: resolve, reject: reject };
-              window.ipc.postMessage(JSON.stringify({ __rpc: true, id: id, method: method, data: data }));
+              window.ipc.postMessage(JSON.stringify({ type: "req", id: id, method: method, data: data }));
             });
           };
         }
@@ -60,14 +59,7 @@ const RPC_BRIDGE_SCRIPT = `
       var rpcMessages = new Proxy({}, {
         get: function(_, event) {
           return function(data) {
-            // Synchronously dispatch to local messageHandlers before debugger can pause the engine
-            var mh = messageHandlers[event];
-            if (mh) {
-              for (var i = 0; i < mh.length; i++) {
-                try { mh[i](data); } catch(e) { console.error('message handler error:', e); }
-              }
-            }
-            window.ipc.postMessage(JSON.stringify({ __rpcSend: true, event: event, data: data }));
+            window.ipc.postMessage(JSON.stringify({ type: "msg", event: event, data: data }));
           };
         }
       });
@@ -92,7 +84,7 @@ const RPC_BRIDGE_SCRIPT = `
       };
     },
 
-    // ===== 内部：resolve webview 调用 host 的回调 =====
+    // 内部：resolve WebView→Host 请求的回调
     _resolve: function(id, data, error) {
       var cb = callbacks[id];
       if (!cb) return;
@@ -101,38 +93,33 @@ const RPC_BRIDGE_SCRIPT = `
       else cb.resolve(data);
     },
 
-    // ===== 内部：处理 host 调用 webview 的 request =====
+    // 内部：处理 Host→WebView 的 request
     _handleInvoke: function(payload) {
       var id = payload.id;
       var method = payload.method;
       var data = payload.data;
       var handler = rpcHandlers[method];
       if (!handler) {
-        window.ipc.postMessage(JSON.stringify({ __rpcResponse: true, id: id, error: 'No handler for: ' + method }));
+        window.ipc.postMessage(JSON.stringify({ type: "res", id: id, error: "No handler for: " + method }));
         return;
       }
       try {
         var result = handler(data);
-        if (result && typeof result.then === 'function') {
+        if (result && typeof result.then === "function") {
           result.then(function(res) {
-            window.ipc.postMessage(JSON.stringify({ __rpcResponse: true, id: id, data: res }));
+            window.ipc.postMessage(JSON.stringify({ type: "res", id: id, data: res }));
           }).catch(function(err) {
-            window.ipc.postMessage(JSON.stringify({ __rpcResponse: true, id: id, error: err.message || String(err) }));
+            window.ipc.postMessage(JSON.stringify({ type: "res", id: id, error: err.message || String(err) }));
           });
         } else {
-          window.ipc.postMessage(JSON.stringify({ __rpcResponse: true, id: id, data: result }));
+          window.ipc.postMessage(JSON.stringify({ type: "res", id: id, data: result }));
         }
       } catch (err) {
-        window.ipc.postMessage(JSON.stringify({ __rpcResponse: true, id: id, error: err.message || String(err) }));
+        window.ipc.postMessage(JSON.stringify({ type: "res", id: id, error: err.message || String(err) }));
       }
     },
 
-    // ===== 内部：处理 host 发给 webview 的消息 =====
-    // BUG FIX: 使用 setTimeout 延迟分发 handler，确保 _handleSend 脚本立即返回。
-    // 当 Host handler 中同时调用 messages（触发 _handleSend）和 return（触发 _resolve），
-    // 两者作为独立的 evaluateJavaScript 发往 WebKit。如果 handler 同步执行且命中
-    // debugger，JS 引擎暂停会阻塞后续 _resolve 脚本。用 setTimeout 将 handler 推迟到
-    // 独立 macrotask，_handleSend 立即返回后 _resolve 可正常执行。
+    // 内部：处理 Host→WebView 的消息（setTimeout 保留 debugger 安全修复）
     _handleSend: function(event, data) {
       setTimeout(function() {
         var mh = messageHandlers[event] || [];
@@ -144,7 +131,6 @@ const RPC_BRIDGE_SCRIPT = `
 `
 
 type RpcHandler = (data: any) => any | Promise<any>
-type PendingCallback = { resolve: (value: any) => void; reject: (reason?: any) => void }
 
 export default class BrowserWindow<T extends RPCInterface = any> {
   readonly label: string
@@ -153,8 +139,6 @@ export default class BrowserWindow<T extends RPCInterface = any> {
   private _autoMenu?: Menu
   private _rpc?: HostRPCInstance<T>
   private rpcHandlers: Map<string, RpcHandler> = new Map()
-  private _webviewRpcCounter = 0
-  private _webviewRpcCallbacks: Map<number, PendingCallback> = new Map()
   private _rpcMessageListeners: Record<string, Function[]> = {}
 
   constructor(label: string, props: BrowserWindowAttributes<T> = {}) {
@@ -169,9 +153,37 @@ export default class BrowserWindow<T extends RPCInterface = any> {
     if (!props.initializationScripts) props.initializationScripts = []
     props.initializationScripts.unshift(RPC_BRIDGE_SCRIPT)
 
-    // 监听 ipcMessage，拦截 RPC 调用
-    this.on('ipcMessage', (msg: { url: string; body: string }) => {
-      this.handleIpcMessage(msg)
+    // 监听 Rust 转发的 WebView→Host RPC 请求
+    this.on('rpcRequest' as any, (msg: { rpcId: number; method: string; data: any }) => {
+      const handler = this.rpcHandlers.get(msg.method)
+      if (!handler) {
+        this.send('rpc_resolve', {
+          id: msg.rpcId,
+          data: null,
+          error: `RPC method '${msg.method}' is not registered`
+        })
+        return
+      }
+      Promise.resolve()
+        .then(() => handler(msg.data))
+        .then(result => this.send('rpc_resolve', { id: msg.rpcId, data: result }))
+        .catch(err =>
+          this.send('rpc_resolve', { id: msg.rpcId, data: null, error: err?.message || String(err) })
+        )
+    })
+
+    // 监听 WebView→Host 单向消息
+    this.on('rpcMessage' as any, (msg: { event: string; data: any }) => {
+      const listeners = (this._rpcMessageListeners[msg.event] || []).slice()
+      queueMicrotask(() => {
+        for (const cb of listeners) {
+          try {
+            cb(msg.data)
+          } catch (e) {
+            console.error(`RPC message listener error [${msg.event}]:`, e)
+          }
+        }
+      })
     })
 
     // 处理 props.rpc：创建 RPC 实例
@@ -306,18 +318,18 @@ export default class BrowserWindow<T extends RPCInterface = any> {
       }
     }
 
-    // 构建 requests 代理（调用 WebView 端方法）
+    // 构建 requests 代理（调用 WebView 端方法，通过 Rust rpc_invoke 延迟响应）
     const self = this
     const requestsProxy = new Proxy({} as any, {
       get(_, method: string) {
-        return (data: any) => self.invokeWebviewRequest(method, data)
+        return (data: any) => self.send('rpc_invoke', { method, data })
       }
     })
 
-    // 构建 messages 代理（向 WebView 端发送消息）
+    // 构建 messages 代理（向 WebView 端发送消息，通过 Rust rpc_send）
     const messagesProxy = new Proxy({} as any, {
       get(_, event: string) {
-        return (data: any) => self.sendToWebview(event, data)
+        return (data: any) => self.send('rpc_send', { event, data })
       }
     })
 
@@ -638,96 +650,5 @@ export default class BrowserWindow<T extends RPCInterface = any> {
     const app = getCurrentApplication()
     if (!app) throw new Error('Application has not been created')
     return app
-  }
-
-  /** 处理来自 WebView 的 IPC 消息，识别 RPC 调用 */
-  private handleIpcMessage(msg: { url: string; body: string }) {
-    let parsed: any
-    try {
-      parsed = JSON.parse(msg.body)
-    } catch {
-      return // 非 JSON 消息，忽略
-    }
-    if (!parsed) return
-
-    try {
-      // WebView → Node: request 调用
-      if (parsed.__rpc) {
-        const { id, method, data } = parsed
-        const handler = this.rpcHandlers.get(method)
-
-        if (!handler) {
-          this.resolveRpc(id, undefined, `RPC method '${method}' is not registered`)
-          return
-        }
-
-        Promise.resolve()
-          .then(() => handler(data))
-          .then(result => this.resolveRpc(id, result))
-          .catch(err => this.resolveRpc(id, undefined, err?.message || String(err)))
-        return
-      }
-
-      // WebView → Node: request 结果返回（对端调用我的请求后的响应）
-      if (parsed.__rpcResponse) {
-        const { id, data, error } = parsed
-        const callback = this._webviewRpcCallbacks.get(id)
-        if (callback) {
-          this._webviewRpcCallbacks.delete(id)
-          try {
-            if (error) callback.reject(new Error(error))
-            else callback.resolve(data)
-          } catch (e) {
-            console.error('RPC response callback error:', e)
-          }
-        }
-        return
-      }
-
-      // WebView → Node: send 消息（fire-and-forget）
-      // 使用 queueMicrotask 延迟分发，避免在 IPC 处理链中重入导致死锁
-      if (parsed.__rpcSend) {
-        const { event, data } = parsed
-        const listeners = (this._rpcMessageListeners[event] || []).slice()
-        queueMicrotask(() => {
-          for (const cb of listeners) {
-            try {
-              cb(data)
-            } catch (e) {
-              console.error(`RPC message listener error [${event}]:`, e)
-            }
-          }
-        })
-        return
-      }
-    } catch (e) {
-      console.error('handleIpcMessage error:', e)
-    }
-  }
-
-  /** 将 RPC 结果发送回 WebView */
-  private resolveRpc(id: number, data?: any, error?: string) {
-    const dataJson = JSON.stringify(data === undefined ? null : data)
-    const errorJson = error ? JSON.stringify(error) : 'null'
-    this.evaluateScript(
-      `window.__nodeWebview && window.__nodeWebview._resolve(${id}, ${dataJson}, ${errorJson})`
-    ).catch(err => {
-      console.error(`[node-webview] resolveRpc error for id ${id}:`, err)
-    })
-  }
-
-  /** 调用 WebView 端的 request 方法（Node → WebView request-response） */
-  private invokeWebviewRequest(method: string, data: any): Promise<any> {
-    const id = ++this._webviewRpcCounter
-    return new Promise((resolve, reject) => {
-      this._webviewRpcCallbacks.set(id, { resolve, reject })
-      const payload = JSON.stringify({ id, method, data })
-      this.evaluateScript(`window.__nodeWebview && window.__nodeWebview._handleInvoke(${payload})`).catch(
-        err => {
-          this._webviewRpcCallbacks.delete(id)
-          reject(err)
-        }
-      )
-    })
   }
 }

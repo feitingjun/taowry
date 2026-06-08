@@ -78,6 +78,19 @@ pub fn handle_listen(
     return;
   }
 
+  if method == "rpc_invoke" {
+    handle_rpc_invoke(app, id, label, data);
+    return;
+  }
+  if method == "rpc_resolve" {
+    handle_rpc_resolve(app, id, label, data);
+    return;
+  }
+  if method == "rpc_send" {
+    handle_rpc_send(app, id, label, data);
+    return;
+  }
+
   let result = handle_method(app, event_loop, control_flow, label, method, data);
   match result {
     Ok(data) => send_response(id, label, method, data),
@@ -109,6 +122,100 @@ fn handle_evaluate_script_with_callback(
 
   if let Err(error) = result {
     send_error(id, label, method, error);
+  }
+}
+
+/// Host→WebView 请求（request-response）
+/// 延迟响应模式：Rust 分配 rpc_id 并记录 ioc_id，执行 JS 后不立即回复，
+/// 等 WebView 通过 ipc_handler 返回响应时才发送 _ioc: 响应。
+fn handle_rpc_invoke(app: &mut Application, ioc_id: &str, label: &str, data: &Value) {
+  let result = app
+    .get_window(label)
+    .ok_or_else(|| format!("window '{}' does not exist", label))
+    .and_then(|window| {
+      let method = data
+        .get("method")
+        .and_then(Value::as_str)
+        .ok_or("method is required")?;
+      let rpc_data = data.get("data").unwrap_or(&Value::Null);
+
+      let rpc_id = window
+        .rpc_state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .assign_host_request_id(ioc_id.to_string());
+
+      let payload = json!({ "id": rpc_id, "method": method, "data": rpc_data });
+      let js = format!(
+        "window.__nodeWebview && window.__nodeWebview._handleInvoke({})",
+        serde_json::to_string(&payload).unwrap()
+      );
+      window.evaluate_script(&js).map_err(|e| e.to_string())
+    });
+
+  if let Err(error) = result {
+    send_error(ioc_id, label, "rpc_invoke", error);
+  }
+  // 成功时不发送响应——延迟到 WebView 回复（在 ipc_handler 中处理）
+}
+
+/// Host 回应 WebView→Host 的请求
+fn handle_rpc_resolve(app: &Application, id: &str, label: &str, data: &Value) {
+  let result = app
+    .get_window(label)
+    .ok_or_else(|| format!("window '{}' does not exist", label))
+    .and_then(|window| {
+      let rpc_id = data
+        .get("id")
+        .and_then(Value::as_u64)
+        .ok_or("id is required")?;
+      let rpc_data = data.get("data").unwrap_or(&Value::Null);
+      let error = data.get("error").and_then(Value::as_str);
+
+      // WebView→Host 请求 ID 仅透传，无需清理 RpcState
+
+      let data_json = serde_json::to_string(rpc_data).unwrap();
+      let error_json = match error {
+        Some(e) => serde_json::to_string(e).unwrap(),
+        None => "null".to_string(),
+      };
+      let js = format!(
+        "window.__nodeWebview && window.__nodeWebview._resolve({}, {}, {})",
+        rpc_id, data_json, error_json
+      );
+      window.evaluate_script(&js).map_err(|e| e.to_string())
+    });
+
+  match result {
+    Ok(_) => send_response(id, label, "rpc_resolve", Value::Null),
+    Err(error) => send_error(id, label, "rpc_resolve", error),
+  }
+}
+
+/// Host→WebView 单向消息（fire-and-forget）
+fn handle_rpc_send(app: &Application, id: &str, label: &str, data: &Value) {
+  let result = app
+    .get_window(label)
+    .ok_or_else(|| format!("window '{}' does not exist", label))
+    .and_then(|window| {
+      let event = data
+        .get("event")
+        .and_then(Value::as_str)
+        .ok_or("event is required")?;
+      let rpc_data = data.get("data").unwrap_or(&Value::Null);
+
+      let event_json = serde_json::to_string(event).unwrap();
+      let data_json = serde_json::to_string(rpc_data).unwrap();
+      let js = format!(
+        "window.__nodeWebview && window.__nodeWebview._handleSend({}, {})",
+        event_json, data_json
+      );
+      window.evaluate_script(&js).map_err(|e| e.to_string())
+    });
+
+  match result {
+    Ok(_) => send_response(id, label, "rpc_send", Value::Null),
+    Err(error) => send_error(id, label, "rpc_send", error),
   }
 }
 

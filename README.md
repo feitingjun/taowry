@@ -852,14 +852,16 @@ interface MenuItemOptions {
 
 ## 注意事项
 
-1. **菜单快捷键**：快捷键格式为 `Modifier+Key`，其中 Key 必须是标准键名（如 `N`、`S`、`=`、`-`），不支持 `Plus` 等别名。
+1. **RPC 通信架构**：RPC 协议由 Rust 层解析和路由（基于 wry 原生 `with_ipc_handler` + `evaluate_script`），Node.js 侧为薄消费者。Host→WebView 请求采用延迟响应模式——Rust 分配请求 ID 并追踪映射，WebView 响应后才将结果发回 Node.js。非 RPC 的 `window.ipc.postMessage()` 仍通过 `ipcMessage` 事件透传。
 
-2. **evaluateScriptReturnResult**：在 `file://` URL 下 wry 存在已知问题，建议使用 `http://` URL 加载页面，或使用 `evaluateScript` 配合 RPC 通信获取返回值。
+2. **菜单快捷键**：快捷键格式为 `Modifier+Key`，其中 Key 必须是标准键名（如 `N`、`S`、`=`、`-`），不支持 `Plus` 等别名。
 
-3. **应用菜单**：`setApplicationMenu` 仅在 macOS 上有效。Windows/Linux 请使用 `setWindowMenu` 或 `win.setMenu()` 设置窗口菜单。
+3. **evaluateScriptReturnResult**：在 `file://` URL 下 wry 存在已知问题，建议使用 `http://` URL 加载页面，或使用 `evaluateScript` 配合 RPC 通信获取返回值。
 
-4. **透明窗口**：创建窗口时设置 `transparent: true`，WebView 和窗口背景色会自动设为透明。
+4. **应用菜单**：`setApplicationMenu` 仅在 macOS 上有效。Windows/Linux 请使用 `setWindowMenu` 或 `win.setMenu()` 设置窗口菜单。
 
-5. **无边框窗口拖动**：wry 0.55+ 原生支持 CSS `-webkit-app-region: drag` 拖动窗口，`-webkit-app-region: no-drag` 排除交互区域（按钮、输入框等），无需额外代码。
+5. **透明窗口**：创建窗口时设置 `transparent: true`，WebView 和窗口背景色会自动设为透明。
 
-6. **本地开发**：运行 `npm run build` 编译 Rust 二进制文件并复制到 `ts/` 目录，然后通过 `npm start` 运行测试。
+6. **无边框窗口拖动**：wry 0.55+ 原生支持 CSS `-webkit-app-region: drag` 拖动窗口，`-webkit-app-region: no-drag` 排除交互区域（按钮、输入框等），无需额外代码。
+
+7. **本地开发**：运行 `npm run build` 编译 Rust 二进制文件并复制到 `ts/` 目录，然后通过 `npm start` 运行测试。

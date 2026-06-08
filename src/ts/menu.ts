@@ -1,4 +1,4 @@
-import { MenuItemOptions } from './types'
+import type { MenuItemOptions } from './types'
 import { getCurrentApplication } from './app'
 
 /**
@@ -16,12 +16,14 @@ export class Menu {
     this.created = app()._sendIoMessage({
       label,
       method: 'create_menu',
-      data: this._items,
+      data: this._items
     })
   }
 
   /** 获取菜单项列表 */
-  get items(): MenuItemOptions[] { return this._items }
+  get items(): MenuItemOptions[] {
+    return this._items
+  }
 }
 
 /** 标准化菜单项，确保每个菜单项都有 id 和正确的 type */

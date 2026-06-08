@@ -26,8 +26,6 @@ const App = () => {
       <button
         onClick={async () => {
           await rpc.messages.update({ message: '11111111' })
-          console.log('[webview] message sent, now debugger...')
-          debugger
         }}
       >
         点击

@@ -1,17 +1,14 @@
 {
   "compilerOptions": {
-    "rootDir": ".",
-    "outDir": "./dist",
-    "target": "es2016",
-    "module": "commonjs",
-    "skipLibCheck": true,
-    "declaration": true,
+    "ignoreDeprecations": "6.0",
+    "target": "ESNext",
+    "allowJs": true,
+    "strict": true,
+    "sourceMap": true,
+    "verbatimModuleSyntax": true,
+    "jsx": "react-jsx",
     "types": [
       "bun"
-    ],
-    "lib": [
-      "es2016",
-      "dom"
     ]
   },
   "include": [

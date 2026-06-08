@@ -5,3 +5,4 @@
 /Cargo.lock
 /binary
 /src/ts/node-webview
+bun.lock

@@ -1,0 +1,156 @@
+//! RPC 协议模块
+//!
+//! 在 wry 原生 IPC（`with_ipc_handler` + `evaluate_script`）之上构建结构化的 RPC 协议层。
+//! 负责解析 WebView 发来的 RPC 消息、管理 Host→WebView 请求的 ID 映射，
+//! 并将非 RPC 消息透传给传统的 `ipcMessage` 通道。
+
+use serde_json::Value;
+use std::collections::HashMap;
+
+/// RPC 消息类型
+pub enum RpcMessageType {
+  /// WebView→Host 请求（request-response）
+  Request,
+  /// WebView 对 Host 请求的响应
+  Response,
+  /// WebView→Host 单向消息（fire-and-forget）
+  Send,
+}
+
+/// 解析后的 RPC 消息
+pub struct RpcMessage {
+  pub msg_type: RpcMessageType,
+  pub id: Option<u64>,
+  pub method: Option<String>,
+  pub event: Option<String>,
+  pub data: Value,
+  pub error: Option<String>,
+}
+
+/// 尝试将 IPC body 解析为 RPC 消息。
+/// 如果不是合法的 RPC JSON（缺少 `type` 字段或类型未知），返回 None，
+/// 调用方应回退到传统的 `ipcMessage` 透传逻辑。
+pub fn parse_ipc_message(body: &str) -> Option<RpcMessage> {
+  let parsed: Value = serde_json::from_str(body).ok()?;
+  let obj = parsed.as_object()?;
+  let msg_type = match obj.get("type")?.as_str()? {
+    "req" => RpcMessageType::Request,
+    "res" => RpcMessageType::Response,
+    "msg" => RpcMessageType::Send,
+    _ => return None,
+  };
+
+  Some(RpcMessage {
+    msg_type,
+    id: obj.get("id").and_then(Value::as_u64),
+    method: obj.get("method").and_then(Value::as_str).map(String::from),
+    event: obj.get("event").and_then(Value::as_str).map(String::from),
+    data: obj.get("data").cloned().unwrap_or(Value::Null),
+    error: obj.get("error").and_then(Value::as_str).map(String::from),
+  })
+}
+
+/// 每个窗口独立的 RPC 状态。
+///
+/// 仅追踪 Host→WebView 方向的请求（`pending_host_requests`）：
+/// Rust 为该方向分配 rpc_id，并在 WebView 响应前持有对应的 `_ioc:` 消息 ID，
+/// 以便响应到达时能将结果路由回 Node.js 的正确回调。
+///
+/// WebView→Host 方向的请求 ID 由桥接脚本生成，Rust 仅透传，无需在此追踪。
+pub struct RpcState {
+  host_request_counter: u64,
+  /// rpc_id → node_ioc_id 映射（Host→WebView 请求追踪）
+  pending_host_requests: HashMap<u64, String>,
+}
+
+impl RpcState {
+  pub fn new() -> Self {
+    Self {
+      host_request_counter: 0,
+      pending_host_requests: HashMap::new(),
+    }
+  }
+
+  /// 为 Host→WebView 请求分配新的 rpc_id，并记录对应的 `_ioc:` 消息 ID。
+  /// 返回新分配的 rpc_id。
+  pub fn assign_host_request_id(&mut self, ioc_id: String) -> u64 {
+    self.host_request_counter += 1;
+    let rpc_id = self.host_request_counter;
+    self.pending_host_requests.insert(rpc_id, ioc_id);
+    rpc_id
+  }
+
+  /// WebView 响应后，移除映射并返回对应的 `_ioc:` 消息 ID，
+  /// 用于将结果发送回 Node.js。
+  pub fn resolve_host_request(&mut self, rpc_id: u64) -> Option<String> {
+    self.pending_host_requests.remove(&rpc_id)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn test_parse_request() {
+    let body = r#"{"type":"req","id":1,"method":"echo","data":{"msg":"hi"}}"#;
+    let msg = parse_ipc_message(body).expect("should parse");
+    assert!(matches!(msg.msg_type, RpcMessageType::Request));
+    assert_eq!(msg.id, Some(1));
+    assert_eq!(msg.method.as_deref(), Some("echo"));
+    assert_eq!(msg.data["msg"], "hi");
+  }
+
+  #[test]
+  fn test_parse_response() {
+    let body = r#"{"type":"res","id":2,"data":{"count":1}}"#;
+    let msg = parse_ipc_message(body).expect("should parse");
+    assert!(matches!(msg.msg_type, RpcMessageType::Response));
+    assert_eq!(msg.id, Some(2));
+    assert_eq!(msg.data["count"], 1);
+  }
+
+  #[test]
+  fn test_parse_response_with_error() {
+    let body = r#"{"type":"res","id":3,"error":"handler failed"}"#;
+    let msg = parse_ipc_message(body).expect("should parse");
+    assert!(matches!(msg.msg_type, RpcMessageType::Response));
+    assert_eq!(msg.error.as_deref(), Some("handler failed"));
+  }
+
+  #[test]
+  fn test_parse_send() {
+    let body = r#"{"type":"msg","event":"update","data":{"x":1}}"#;
+    let msg = parse_ipc_message(body).expect("should parse");
+    assert!(matches!(msg.msg_type, RpcMessageType::Send));
+    assert_eq!(msg.event.as_deref(), Some("update"));
+  }
+
+  #[test]
+  fn test_parse_non_rpc_returns_none() {
+    assert!(parse_ipc_message("hello world").is_none());
+    assert!(parse_ipc_message(r#"{"foo":"bar"}"#).is_none());
+    assert!(parse_ipc_message(r#"{"type":"unknown"}"#).is_none());
+    assert!(parse_ipc_message("").is_none());
+  }
+
+  #[test]
+  fn test_rpc_state_host_requests() {
+    let mut state = RpcState::new();
+    let id1 = state.assign_host_request_id("ioc-abc".to_string());
+    let id2 = state.assign_host_request_id("ioc-def".to_string());
+    assert_eq!(id1, 1);
+    assert_eq!(id2, 2);
+
+    assert_eq!(
+      state.resolve_host_request(id1),
+      Some("ioc-abc".to_string())
+    );
+    // 第二次 resolve 同一 ID 应返回 None
+    assert_eq!(state.resolve_host_request(id1), None);
+    assert_eq!(
+      state.resolve_host_request(id2),
+      Some("ioc-def".to_string())
+    );
+  }
+}

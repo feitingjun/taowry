@@ -5,6 +5,7 @@
 
 use image::GenericImageView;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use tao::dpi::{PhysicalPosition, PhysicalSize, Position, Size};
 use tao::error::{ExternalError, NotSupportedError};
 use tao::monitor::MonitorHandle;
@@ -14,21 +15,31 @@ use tao::window::{
 };
 use wry::{Rect, WebView};
 
+use crate::rpc::RpcState;
+
 /// 浏览器窗口，包含 tao 窗口和 wry WebView 的绑定
 pub struct BrowserWindow {
   pub label: String,
   pub window: TaoWindow,
   pub webview: WebView,
   id: WindowId,
+  pub rpc_state: Arc<Mutex<RpcState>>,
 }
 
 impl BrowserWindow {
-  pub fn new(label: String, window: TaoWindow, webview: WebView, id: WindowId) -> Self {
+  pub fn new(
+    label: String,
+    window: TaoWindow,
+    webview: WebView,
+    id: WindowId,
+    rpc_state: Arc<Mutex<RpcState>>,
+  ) -> Self {
     Self {
       label,
       window,
       webview,
       id,
+      rpc_state,
     }
   }
 

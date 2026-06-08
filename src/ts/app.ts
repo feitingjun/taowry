@@ -1,6 +1,6 @@
-import { ChildProcessWithoutNullStreams, spawn } from 'child_process'
+import { type ChildProcessWithoutNullStreams, spawn } from 'child_process'
 import { getBinaryPath, uid } from './utils'
-import { AppEvent, Monitor, ReceiveMessage, SendMessage, RPCInterface, MenuOptions } from './types'
+import type { AppEvent, Monitor, ReceiveMessage, SendMessage, RPCInterface, MenuOptions } from './types'
 import type BrowserWindow from './window'
 import { Menu } from './menu'
 

@@ -7,10 +7,12 @@ use crate::event::handle_window_event;
 use crate::listen::{
   handle_listen, send_app_event, send_io_message, send_window_event, IO_CHANNEL_PREFIX,
 };
+use crate::rpc::{parse_ipc_message, RpcMessageType, RpcState};
 use crate::window::{load_tao_icon, load_tray_icon, BrowserWindow};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{self, BufRead};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use tao::dpi::{LogicalPosition, LogicalSize, Size};
 use tao::event::{Event, StartCause};
@@ -178,16 +180,19 @@ impl Application {
       position: LogicalPosition::new(0.0, 0.0).into(),
       size,
     });
-    webview_builder = apply_webview_options(label.clone(), webview_builder, data)?;
+    let rpc_state = Arc::new(Mutex::new(RpcState::new()));
+    webview_builder =
+      apply_webview_options(label.clone(), webview_builder, data, rpc_state.clone())?;
 
     let webview = webview_builder
       .build_as_child(&window)
       .map_err(|error| format!("failed to create webview '{}': {}", label, error))?;
     let id = window.id();
     let id_string = format!("{:?}", id);
-    self
-      .windows
-      .insert(label.clone(), BrowserWindow::new(label, window, webview, id));
+    self.windows.insert(
+      label.clone(),
+      BrowserWindow::new(label, window, webview, id, rpc_state),
+    );
     Ok(id_string)
   }
 
@@ -628,6 +633,7 @@ fn apply_webview_options<'a>(
   label: String,
   mut builder: WebViewBuilder<'a>,
   data: &Value,
+  rpc_state: Arc<Mutex<RpcState>>,
 ) -> Result<WebViewBuilder<'a>, String> {
   if let Some(url) = data.get("url").and_then(Value::as_str) {
     // Workaround: file:// URLs break IPC handlers in WKWebView on macOS.
@@ -710,17 +716,79 @@ fn apply_webview_options<'a>(
   }
 
   let ipc_label = label.clone();
+  let ipc_rpc_state = rpc_state.clone();
   builder = builder.with_ipc_handler(move |request| {
-    let uri = request.uri().to_string();
     let body = request.body().clone();
-    send_window_event(
-      &ipc_label,
-      "ipcMessage",
-      json!({
-        "url": uri,
-        "body": body
-      }),
-    );
+    let uri = request.uri().to_string();
+
+    // 尝试解析为 RPC 消息，成功则按类型路由；失败则回退到传统 ipcMessage 透传
+    if let Some(rpc_msg) = parse_ipc_message(&body) {
+      match rpc_msg.msg_type {
+        RpcMessageType::Request => {
+          send_io_message(json!({
+            "type": "windowEvent",
+            "label": &ipc_label,
+            "method": "rpcRequest",
+            "data": {
+              "rpcId": rpc_msg.id,
+              "method": rpc_msg.method,
+              "data": rpc_msg.data
+            }
+          }));
+        }
+        RpcMessageType::Response => {
+          // WebView 对 Host→WebView 请求的响应：
+          // 查找 rpc_id 对应的 _ioc: 消息 ID，直接发送 _ioc: 响应给 Node.js，
+          // 解析 _sendIoMessage 创建的 Promise
+          if let Some(rpc_id) = rpc_msg.id {
+            if let Ok(mut state) = ipc_rpc_state.lock() {
+              if let Some(ioc_id) = state.resolve_host_request(rpc_id) {
+                if let Some(error) = &rpc_msg.error {
+                  send_io_message(json!({
+                    "id": ioc_id,
+                    "label": &ipc_label,
+                    "method": "rpc_invoke",
+                    "type": "response",
+                    "error": error
+                  }));
+                } else {
+                  send_io_message(json!({
+                    "id": ioc_id,
+                    "label": &ipc_label,
+                    "method": "rpc_invoke",
+                    "type": "response",
+                    "data": rpc_msg.data
+                  }));
+                }
+                return;
+              }
+            }
+          }
+          // 如果找不到对应的 pending 请求，忽略此响应
+        }
+        RpcMessageType::Send => {
+          send_io_message(json!({
+            "type": "windowEvent",
+            "label": &ipc_label,
+            "method": "rpcMessage",
+            "data": {
+              "event": rpc_msg.event,
+              "data": rpc_msg.data
+            }
+          }));
+        }
+      }
+    } else {
+      // 非 RPC 消息，保持向后兼容
+      send_window_event(
+        &ipc_label,
+        "ipcMessage",
+        json!({
+          "url": uri,
+          "body": body
+        }),
+      );
+    }
   });
 
   let navigation_label = label.clone();
