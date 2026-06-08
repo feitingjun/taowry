@@ -1,11 +1,13 @@
-import { serve } from 'bun'
-import { Application, BrowserWindow, defineRPC, type RPCSchema, Tray } from '../src/ts/index'
-import h from './index.html'
-
-const server = serve({
-  port: 3000,
-  routes: { '/': h }
-})
+import { build } from 'bun'
+import {
+  Application,
+  BrowserWindow,
+  defineRPC,
+  type RPCSchema,
+  type ProtocolRequest,
+  type ProtocolResponse,
+  Tray
+} from '../src/ts/index'
 
 export type RPC = {
   host: RPCSchema<{
@@ -32,7 +34,6 @@ const rpc = defineRPC<RPC>({
   requests: {
     echo: async data => {
       console.log(data.msg)
-      // win.rpc?.messages.update({ message: 'host-reply: ' + data.msg })
       return { received: data.msg }
     }
   },
@@ -43,16 +44,33 @@ const rpc = defineRPC<RPC>({
     }
   }
 })
-console.log(h, 11111111)
+
+const b = await build({
+  entrypoints: [process.cwd() + '/test/index.html'],
+  target: 'browser'
+})
+
 const win = new BrowserWindow<RPC>('main', {
   title: '测试',
   width: 600,
   height: 400,
-  url: 'http://localhost:3000/',
+  url: 'views://index.html',
   rpc: rpc,
-  devtools: true
-  // enabledButtons: ['close']
+  devtools: true,
+  protocolHandler: async (request: ProtocolRequest): Promise<ProtocolResponse> => {
+    let path = request.uri.replace('views://index.html', '')
+    let file
+    if (path === '/') {
+      file = b.outputs.find(o => o.path.endsWith('index.html'))
+    } else {
+      file = b.outputs.find(o => o.path.endsWith(path))
+    }
+    return {
+      data: (await file?.text()) ?? '',
+      mimeType: file?.type,
+      statusCode: 200
+    }
+  }
 })
-win.openDevtools()
 
 app.run()

@@ -8,11 +8,13 @@ name = "node-webview"
 path = "src/rs/main.rs"
 
 [dependencies]
+base64 = "0.22"
 image = "0.25.2"
 serde = { version = "1.0.210", features = ["derive"] }
 serde_json = "1.0.128"
 tao = "0.30.2"
 tray-icon = "0.16.0"
+uuid = { version = "1", features = ["v4"] }
 wry = { version="0.55.1", features = ["devtools"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

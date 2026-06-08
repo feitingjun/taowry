@@ -7,6 +7,7 @@ use crate::application::{
   build_window_builder, fullscreen_from_value, headers_from_value, position_from_value,
   size_from_value, theme_from_str, Action, Application,
 };
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde_json::{json, Value};
 use std::io::{self, Write};
 use tao::dpi::Size;
@@ -88,6 +89,11 @@ pub fn handle_listen(
   }
   if method == "rpc_send" {
     handle_rpc_send(app, id, label, data);
+    return;
+  }
+
+  if method == "protocol_response" {
+    handle_protocol_response(app, id, label, data);
     return;
   }
 
@@ -216,6 +222,82 @@ fn handle_rpc_send(app: &Application, id: &str, label: &str, data: &Value) {
   match result {
     Ok(_) => send_response(id, label, "rpc_send", Value::Null),
     Err(error) => send_error(id, label, "rpc_send", error),
+  }
+}
+
+/// 处理 views:// 协议响应
+/// Node 端 handler 处理完请求后，将结果发回 Rust，由 Rust 调用 responder.respond()
+fn handle_protocol_response(app: &Application, id: &str, label: &str, data: &Value) {
+  let result = app
+    .get_window(label)
+    .ok_or_else(|| format!("window '{}' does not exist", label))
+    .and_then(|window| {
+      let request_id = data
+        .get("requestId")
+        .and_then(Value::as_str)
+        .ok_or("requestId is required")?;
+
+      let status_code = data
+        .get("statusCode")
+        .and_then(Value::as_u64)
+        .unwrap_or(200) as u16;
+      let mime_type = data
+        .get("mimeType")
+        .and_then(Value::as_str)
+        .unwrap_or("application/octet-stream");
+      let body_base64 = data
+        .get("data")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+      let body = if body_base64.is_empty() {
+        Vec::new()
+      } else {
+        BASE64
+          .decode(body_base64)
+          .map_err(|e| format!("invalid base64 data: {}", e))?
+      };
+      let custom_headers = data.get("headers");
+
+      // 构建 HTTP Response
+      let mut response_builder = wry::http::Response::builder()
+        .status(status_code)
+        .header("Content-Type", mime_type)
+        .header("Access-Control-Allow-Origin", "*");
+
+      if let Some(headers_obj) = custom_headers.and_then(Value::as_object) {
+        for (key, value) in headers_obj {
+          if let Some(v) = value.as_str() {
+            response_builder = response_builder.header(key.as_str(), v);
+          }
+        }
+      }
+
+      let response = response_builder
+        .body(body)
+        .map_err(|e| format!("failed to build response: {}", e))?;
+
+      // 查找并调用 responder
+      let responder = window
+        .protocol_state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(request_id);
+
+      match responder {
+        Some(responder) => {
+          responder.respond(response);
+          Ok(())
+        }
+        None => Err(format!(
+          "protocol request '{}' not found or already resolved",
+          request_id
+        )),
+      }
+    });
+
+  match result {
+    Ok(_) => send_response(id, label, "protocol_response", Value::Null),
+    Err(error) => send_error(id, label, "protocol_response", error),
   }
 }
 

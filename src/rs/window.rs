@@ -15,6 +15,7 @@ use tao::window::{
 };
 use wry::{Rect, WebView};
 
+use crate::protocol::ProtocolState;
 use crate::rpc::RpcState;
 
 /// 浏览器窗口，包含 tao 窗口和 wry WebView 的绑定
@@ -24,6 +25,7 @@ pub struct BrowserWindow {
   pub webview: WebView,
   id: WindowId,
   pub rpc_state: Arc<Mutex<RpcState>>,
+  pub protocol_state: Arc<Mutex<ProtocolState>>,
 }
 
 impl BrowserWindow {
@@ -33,6 +35,7 @@ impl BrowserWindow {
     webview: WebView,
     id: WindowId,
     rpc_state: Arc<Mutex<RpcState>>,
+    protocol_state: Arc<Mutex<ProtocolState>>,
   ) -> Self {
     Self {
       label,
@@ -40,6 +43,7 @@ impl BrowserWindow {
       webview,
       id,
       rpc_state,
+      protocol_state,
     }
   }
 

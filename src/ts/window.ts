@@ -5,6 +5,8 @@ import type {
   Monitor,
   Position,
   ProgressBarOptions,
+  ProtocolHandler,
+  ProtocolRequest,
   ResizeDirection,
   Size,
   Theme,
@@ -140,6 +142,7 @@ export default class BrowserWindow<T extends RPCInterface = any> {
   private _rpc?: HostRPCInstance<T>
   private rpcHandlers: Map<string, RpcHandler> = new Map()
   private _rpcMessageListeners: Record<string, Function[]> = {}
+  private _protocolHandler?: ProtocolHandler
 
   constructor(label: string, props: BrowserWindowAttributes<T> = {}) {
     const app = getCurrentApplication()
@@ -186,19 +189,62 @@ export default class BrowserWindow<T extends RPCInterface = any> {
       })
     })
 
+    // 监听 views:// 协议请求
+    this.on('protocolRequest' as any, async (request: ProtocolRequest) => {
+      if (!this._protocolHandler) {
+        await this.send('protocol_response', {
+          requestId: request.requestId,
+          statusCode: 404,
+          mimeType: 'text/plain',
+          data: BrowserWindow._encodeToBase64('No protocol handler registered')
+        })
+        return
+      }
+      try {
+        const response = await this._protocolHandler(request)
+        await this.send('protocol_response', {
+          requestId: request.requestId,
+          statusCode: response.statusCode ?? 200,
+          mimeType: response.mimeType ?? 'application/octet-stream',
+          headers: response.headers,
+          data: BrowserWindow._encodeToBase64(response.data)
+        })
+      } catch (err: any) {
+        await this.send('protocol_response', {
+          requestId: request.requestId,
+          statusCode: 500,
+          mimeType: 'text/plain',
+          data: BrowserWindow._encodeToBase64(err?.message || String(err))
+        })
+      }
+    })
+
     // 处理 props.rpc：创建 RPC 实例
     if (props.rpc) {
       this._rpc = this.createRPC(props.rpc)
     }
 
-    // 处理 props.menu：自动创建菜单并关联到窗口
+    // 处理 props.protocolHandler：提取函数，布尔值传给 Rust
+    if (props.protocolHandler) {
+      if (typeof props.protocolHandler === 'function') {
+        this._protocolHandler = props.protocolHandler
+      }
+    }
+
+    // 创建窗口时始终向 Rust 传递 protocolHandler: true（注册协议）
+    const createProps: any = { ...props, protocolHandler: true }
+    // 清除不可序列化的字段
+    delete createProps.rpc
+    delete createProps.menu
+
+    // 处理 props.menu：创建菜单并关联到窗口
     const menuConfig = props.menu
     if (menuConfig) {
       const menuLabel = `${label}:auto-menu`
       this._autoMenu = new Menu(menuLabel, menuConfig)
     }
 
-    this._created = this.create(props)
+    this._created = this.create(createProps)
 
     // 菜单创建完成后自动关联到窗口
     if (this._autoMenu) {
@@ -372,6 +418,18 @@ export default class BrowserWindow<T extends RPCInterface = any> {
   /** 移除 RPC 处理函数 */
   removeHandler(method: string) {
     this.rpcHandlers.delete(method)
+  }
+
+  // ===== Protocol =====
+
+  /** 注册或替换 views:// 协议 handler */
+  setProtocolHandler(handler: ProtocolHandler): void {
+    this._protocolHandler = handler
+  }
+
+  /** 移除协议 handler */
+  removeProtocolHandler(): void {
+    this._protocolHandler = undefined
   }
 
   // ===== RPC: Node → WebView =====
@@ -644,6 +702,14 @@ export default class BrowserWindow<T extends RPCInterface = any> {
 
   private send<T = any>(method: string, data?: any): Promise<T> {
     return this.app._sendIoMessage({ method, data, label: this.label })
+  }
+
+  /** 将字符串或 Uint8Array 编码为 base64 */
+  private static _encodeToBase64(data: string | Uint8Array): string {
+    if (typeof data === 'string') {
+      return Buffer.from(data, 'utf-8').toString('base64')
+    }
+    return Buffer.from(data).toString('base64')
   }
 
   private get app() {

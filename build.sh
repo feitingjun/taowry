@@ -24,4 +24,11 @@ for target in "${targets[@]}"; do
   fi
 
   mv target/$target/release/$old_binary binary/$new_binary
+
+  # 本地开发时复制到 src/ts/ 目录
+  current_target=$(rustc -vV | grep host | awk '{print $2}')
+  if [[ "$target" == "$current_target" ]]; then
+    cp binary/$new_binary src/ts/$old_binary
+    echo "Copied to src/ts/$old_binary"
+  fi
 done

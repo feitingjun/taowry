@@ -7,8 +7,10 @@ use crate::event::handle_window_event;
 use crate::listen::{
   handle_listen, send_app_event, send_io_message, send_window_event, IO_CHANNEL_PREFIX,
 };
+use crate::protocol::ProtocolState;
 use crate::rpc::{parse_ipc_message, RpcMessageType, RpcState};
 use crate::window::{load_tao_icon, load_tray_icon, BrowserWindow};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{self, BufRead};
@@ -181,8 +183,9 @@ impl Application {
       size,
     });
     let rpc_state = Arc::new(Mutex::new(RpcState::new()));
+    let protocol_state = Arc::new(Mutex::new(ProtocolState::new()));
     webview_builder =
-      apply_webview_options(label.clone(), webview_builder, data, rpc_state.clone())?;
+      apply_webview_options(label.clone(), webview_builder, data, rpc_state.clone(), protocol_state.clone())?;
 
     let webview = webview_builder
       .build_as_child(&window)
@@ -191,7 +194,7 @@ impl Application {
     let id_string = format!("{:?}", id);
     self.windows.insert(
       label.clone(),
-      BrowserWindow::new(label, window, webview, id, rpc_state),
+      BrowserWindow::new(label, window, webview, id, rpc_state, protocol_state),
     );
     Ok(id_string)
   }
@@ -634,6 +637,7 @@ fn apply_webview_options<'a>(
   mut builder: WebViewBuilder<'a>,
   data: &Value,
   rpc_state: Arc<Mutex<RpcState>>,
+  protocol_state: Arc<Mutex<ProtocolState>>,
 ) -> Result<WebViewBuilder<'a>, String> {
   if let Some(url) = data.get("url").and_then(Value::as_str) {
     // Workaround: file:// URLs break IPC handlers in WKWebView on macOS.
@@ -834,6 +838,52 @@ fn apply_webview_options<'a>(
     send_window_event(&drag_label, "dragDrop", drag_drop_payload(event));
     prevent_default
   });
+
+  // 注册 views:// 自定义协议
+  let protocol_label = label.clone();
+  let protocol_state_clone = protocol_state.clone();
+  builder = builder.with_asynchronous_custom_protocol(
+    "views".into(),
+    move |_webview_id, request, responder| {
+      // 1. 生成 request_id 并存储 responder
+      let request_id = protocol_state_clone
+        .lock()
+        .expect("protocol state lock poisoned")
+        .insert(responder);
+
+      // 2. 提取请求信息
+      let uri = request.uri().to_string();
+      let method = request.method().to_string();
+      let headers: Value = {
+        let mut map = serde_json::Map::new();
+        for (key, value) in request.headers().iter() {
+          if let Ok(v) = value.to_str() {
+            map.insert(key.as_str().to_string(), Value::String(v.to_string()));
+          }
+        }
+        Value::Object(map)
+      };
+      let body = request.into_body();
+      let body_base64 = if body.is_empty() {
+        String::new()
+      } else {
+        BASE64.encode(&body)
+      };
+
+      // 3. 发送 protocolRequest 事件到 Node.js
+      send_window_event(
+        &protocol_label,
+        "protocolRequest",
+        json!({
+          "requestId": request_id,
+          "uri": uri,
+          "method": method,
+          "headers": headers,
+          "body": body_base64
+        }),
+      );
+    },
+  );
 
   let download_start_label = label.clone();
   let download_allowed = data

@@ -7,6 +7,7 @@ pub mod application;
 pub mod dock;
 pub mod event;
 pub mod listen;
+pub mod protocol;
 pub mod rpc;
 pub mod window;
 
