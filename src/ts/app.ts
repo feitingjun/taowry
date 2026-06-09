@@ -1,13 +1,13 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'child_process'
 import { getBinaryPath, uid } from './utils'
-import type { AppEvent, Monitor, ReceiveMessage, SendMessage, RPCInterface, MenuOptions } from './types'
+import type { AppEvent, Monitor, ReceiveMessage, SendMessage, RPCInterface, MenuOptions, ProtocolHandler, ApplicationOptions } from './types'
 import type BrowserWindow from './window'
 import { Menu } from './menu'
 
 /** IPC 消息前缀，用于在 stdin/stdout 中区分 JSON 消息和普通输出 */
 const IO_CHANNEL_PREFIX = '_ioc:'
 /** 用于存储全局唯一的 Application 实例 */
-const CURRENT_APP_KEY = '__nodeWebviewApp'
+const CURRENT_APP_KEY = '__taowryApp'
 
 type Listener = (data?: any) => void
 type PendingCallback = {
@@ -22,6 +22,14 @@ type QueuedMessage = PendingCallback & {
 export const getCurrentApplication = (): Application | undefined => {
   return (globalThis as any)[CURRENT_APP_KEY]
 }
+
+/** 将字符串或 Uint8Array 编码为 base64 */
+function encodeToBase64(data: string | Uint8Array): string {
+  return typeof data === 'string'
+    ? Buffer.from(data, 'utf-8').toString('base64')
+    : Buffer.from(data).toString('base64')
+}
+
 
 /**
  * Application - 应用实例管理器
@@ -39,20 +47,30 @@ export default class Application {
   private runPromise?: Promise<number | null>
   /** Rust 子进程是否就绪 */
   private ready = false
+  /** views:// 自定义协议 handler（应用级，所有窗口共享） */
+  private _protocol?: ProtocolHandler
+  /** 用户指定的二进制文件目录 */
+  private _binaryDir?: string
 
-  constructor() {
+  constructor(options: ApplicationOptions = {}) {
     const current = getCurrentApplication()
     if (current && current.childProcess && !current.childProcess.killed) {
       throw new Error('Application already exists')
     }
     ;(globalThis as any)[CURRENT_APP_KEY] = this
+    if (options.protocol) {
+      this._protocol = options.protocol
+    }
+    if (options.binaryDir) {
+      this._binaryDir = options.binaryDir
+    }
   }
 
   /** 启动 Rust 子进程，返回退出码 */
   async run(): Promise<number | null> {
     if (this.runPromise) return this.runPromise
 
-    const binaryPath = getBinaryPath()
+    const binaryPath = getBinaryPath(this._binaryDir)
     this.childProcess = spawn(binaryPath, [], {
       stdio: ['pipe', 'pipe', 'pipe']
     })
@@ -293,6 +311,10 @@ export default class Application {
         break
       case 'windowEvent':
         if (msg.method === 'destroy') this._unregisterWindow(msg.label)
+        if (msg.method === 'protocolRequest') {
+          this._handleProtocolRequest(msg.label, msg.data)
+          break
+        }
         this._emit(msg.label, msg.method, msg.data)
         break
       case 'trayEvent':
@@ -301,6 +323,81 @@ export default class Application {
       case 'menuEvent':
         this._emit(`menu:${msg.label}`, msg.method, msg.data)
         break
+    }
+  }
+
+  // ===== views:// 自定义协议 =====
+
+  /** 注册或替换应用级 views:// 协议 handler（所有窗口共享） */
+  setProtocol(handler: ProtocolHandler): void {
+    this._protocol = handler
+  }
+
+  /** 移除协议 handler */
+  removeProtocol(): void {
+    this._protocol = undefined
+  }
+
+  /** 处理 views:// 协议请求（内部方法） */
+  private async _handleProtocolRequest(
+    label: string,
+    data: { requestId: string; uri: string; method: string; headers: Record<string, string>; body?: string }
+  ) {
+    if (!this._protocol) {
+      await this._sendIoMessage({
+        method: 'protocol_response', label,
+        data: {
+          requestId: data.requestId,
+          statusCode: 404,
+          headers: { 'content-type': 'text/plain' },
+          data: encodeToBase64('No protocol handler registered')
+        }
+      })
+      return
+    }
+    try {
+      const requestHeaders = new Headers()
+      if (data.headers) {
+        for (const [k, v] of Object.entries(data.headers)) {
+          requestHeaders.append(k, v)
+        }
+      }
+      const requestInit: RequestInit = {
+        method: data.method,
+        headers: requestHeaders,
+      }
+      if (data.body && data.method !== 'GET' && data.method !== 'HEAD') {
+        requestInit.body = new Uint8Array(Buffer.from(data.body, 'base64'))
+      }
+      const request = new Request(data.uri, requestInit)
+
+      const response = await this._protocol(request)
+
+      const body = new Uint8Array(await response.arrayBuffer())
+      const responseHeaders: Record<string, string> = {}
+      response.headers.forEach((value, key) => {
+        responseHeaders[key] = value
+      })
+
+      await this._sendIoMessage({
+        method: 'protocol_response', label,
+        data: {
+          requestId: data.requestId,
+          statusCode: response.status,
+          headers: responseHeaders,
+          data: encodeToBase64(body)
+        }
+      })
+    } catch (err: any) {
+      await this._sendIoMessage({
+        method: 'protocol_response', label,
+        data: {
+          requestId: data.requestId,
+          statusCode: 500,
+          headers: { 'content-type': 'text/plain' },
+          data: encodeToBase64(err?.message || String(err))
+        }
+      })
     }
   }
 

@@ -1,13 +1,6 @@
 import { build } from 'bun'
-import {
-  Application,
-  BrowserWindow,
-  defineRPC,
-  type RPCSchema,
-  type ProtocolRequest,
-  type ProtocolResponse,
-  Tray
-} from '../src/ts/index'
+import { Application, BrowserWindow, defineRPC, type RPCSchema, Tray } from '../src/ts/index'
+import binary from '../.binary/taowry' with { type: 'file' }
 
 export type RPC = {
   host: RPCSchema<{
@@ -28,7 +21,24 @@ export type RPC = {
   }>
 }
 
-const app = new Application()
+const b = await build({
+  entrypoints: [process.cwd() + '/test/index.html'],
+  target: 'browser'
+})
+
+const app = new Application({
+  protocol: async request => {
+    const filename = new URL(request.url).pathname.replace(/^\/+/, './')
+    const file = b.outputs.find(o => o.path === filename)
+    if (file) {
+      return new Response(await file.text(), {
+        status: 200,
+        headers: { 'Content-Type': file.type ?? 'application/octet-stream' }
+      })
+    }
+    return new Response('Not Found', { status: 404 })
+  }
+})
 
 const rpc = defineRPC<RPC>({
   requests: {
@@ -45,32 +55,13 @@ const rpc = defineRPC<RPC>({
   }
 })
 
-const b = await build({
-  entrypoints: [process.cwd() + '/test/index.html'],
-  target: 'browser'
-})
-
 const win = new BrowserWindow<RPC>('main', {
   title: '测试',
   width: 600,
   height: 400,
-  url: 'views://index.html',
+  url: 'views://app/index.html',
   rpc: rpc,
-  devtools: true,
-  protocolHandler: async (request: ProtocolRequest): Promise<ProtocolResponse> => {
-    let path = request.uri.replace('views://index.html', '')
-    let file
-    if (path === '/') {
-      file = b.outputs.find(o => o.path.endsWith('index.html'))
-    } else {
-      file = b.outputs.find(o => o.path.endsWith(path))
-    }
-    return {
-      data: (await file?.text()) ?? '',
-      mimeType: file?.type,
-      statusCode: 200
-    }
-  }
+  devtools: true
 })
 
 app.run()

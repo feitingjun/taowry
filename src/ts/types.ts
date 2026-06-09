@@ -84,25 +84,16 @@ export interface ProgressBarOptions {
   desktopFilename?: string
 }
 
-/** views:// 自定义协议请求 */
-export interface ProtocolRequest {
-  requestId: string
-  uri: string
-  method: string
-  headers: Record<string, string>
-  body?: string
-}
+/** views:// 协议 handler 函数签名（标准 Web Request/Response） */
+export type ProtocolHandler = (request: Request) => Response | Promise<Response>
 
-/** views:// 自定义协议响应 */
-export interface ProtocolResponse {
-  data: string | Uint8Array
-  mimeType?: string
-  statusCode?: number
-  headers?: Record<string, string>
+/** Application 构造选项 */
+export interface ApplicationOptions {
+  /** views:// 自定义协议 handler（应用级，所有窗口共享） */
+  protocol?: ProtocolHandler
+  /** Rust 二进制文件所在目录（不指定时自动查找） */
+  binaryDir?: string
 }
-
-/** views:// 协议 handler 函数签名 */
-export type ProtocolHandler = (request: ProtocolRequest) => ProtocolResponse | Promise<ProtocolResponse>
 
 /** 窗口尺寸约束 */
 export interface WindowSizeConstraints {
@@ -148,8 +139,6 @@ export interface BrowserWindowAttributes<T extends RPCInterface = {}> {
   menu?: MenuOptions
   /** 窗口 RPC 配置（支持多窗口复用） */
   rpc?: T['host']
-  /** views:// 自定义协议 handler */
-  protocolHandler?: ProtocolHandler
 
   /** 窗口初始宽度 */
   width?: number
@@ -252,7 +241,6 @@ export interface WindowEvent {
   dragDrop: any
   downloadStarted: { url: string; path: string }
   downloadCompleted: { url: string; path?: string | null; success: boolean }
-  protocolRequest: ProtocolRequest
 }
 
 /** 预定义菜单项类型 */

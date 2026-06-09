@@ -1,7 +1,7 @@
 /**
- * node-webview/client - WebView 端客户端 SDK
- * 通过 node-webview/client 子路径导入
- * 用于与 node-webview Host 端进行双向 RPC 通信
+ * taowry/client - WebView 端客户端 SDK
+ * 通过 taowry/client 子路径导入
+ * 用于与 taowry Host 端进行双向 RPC 通信
  */
 
 /** RPC 接口定义 — 分别定义 host 端和 webview 端的方法 */
@@ -32,11 +32,11 @@ export interface WebviewRPCInstance<T extends RPCInterface> {
   off(event: keyof RPCPromise<T['webview'], 'messages'>, callback: (...args: any[]) => void): void
 }
 
-// ===== 全局声明（window.__nodeWebview） =====
+// ===== 全局声明（window.__taowry） =====
 
 declare global {
   interface Window {
-    __nodeWebview?: {
+    __taowry?: {
       defineRPC(config: {
         requests?: Record<string, (data: any) => any>
         messages?: Record<string, ((data: any) => void) | undefined>
@@ -60,7 +60,7 @@ declare global {
  *
  * @example
  * ```typescript
- * import { defineRPC, RPCInterface } from 'node-webview/client'
+ * import { defineRPC, RPCInterface } from 'taowry/client'
  *
  * interface MyRPC extends RPCInterface {
  *   host: {
@@ -103,12 +103,12 @@ declare global {
 export function defineRPC<T extends RPCInterface>(
   config: DefineRPCConfig<T['webview']>
 ): WebviewRPCInstance<T> {
-  if (!window.__nodeWebview) {
+  if (!window.__taowry) {
     throw new Error(
-      'window.__nodeWebview is not available. Make sure you are running inside a node-webview WebView.'
+      'window.__taowry is not available. Make sure you are running inside a taowry WebView.'
     )
   }
-  const rawRpc = window.__nodeWebview.defineRPC({
+  const rawRpc = window.__taowry.defineRPC({
     requests: ((config as any)?.requests ?? {}) as Record<string, (data: any) => any>,
     messages: (config?.messages ?? {}) as Record<string, ((data: any) => void) | undefined>
   })

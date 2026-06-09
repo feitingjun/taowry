@@ -1,10 +1,10 @@
 [package]
-name = "node-webview"
+name = "taowry"
 version = "0.0.1"
 edition = "2021"
 
 [[bin]]
-name = "node-webview"
+name = "taowry"
 path = "src/rs/main.rs"
 
 [dependencies]

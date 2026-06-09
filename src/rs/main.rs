@@ -1,4 +1,4 @@
-//! node-webview - 基于 tao + wry 的 Node.js WebView 桥接库
+//! taowry - 基于 tao + wry 的 WebView 桥接库，支持 Node.js 和 Bun
 //!
 //! 通过 stdin/stdout IPC 协议与 Node.js 进程通信，
 //! 支持创建多窗口、菜单、托盘等功能。

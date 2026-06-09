@@ -13,13 +13,13 @@ fn main() -> wry::Result<()> {
     .build(&event_loop)
     .unwrap();
 
-  // Same init script as node-webview RPC bridge
+  // Same init script as taowry RPC bridge
   let init_script = r#"
 (function() {
-  if (window.__nodeWebview) return;
+  if (window.__taowry) return;
   var counter = 0;
   var callbacks = {};
-  window.__nodeWebview = {
+  window.__taowry = {
     invoke: function(method, data) {
       return new Promise(function(resolve, reject) {
         var id = ++counter;
@@ -45,7 +45,7 @@ fn main() -> wry::Result<()> {
       setTimeout(function() {
         try {
           window.ipc.postMessage('test_direct');
-          document.getElementById('result').textContent = 'IPC sent! hasNodeWebview=' + !!window.__nodeWebview;
+          document.getElementById('result').textContent = 'IPC sent! hasTaowry=' + !!window.__taowry;
         } catch(e) {
           document.getElementById('result').textContent = 'Error: ' + e.message;
         }

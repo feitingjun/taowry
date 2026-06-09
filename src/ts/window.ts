@@ -5,8 +5,6 @@ import type {
   Monitor,
   Position,
   ProgressBarOptions,
-  ProtocolHandler,
-  ProtocolRequest,
   ResizeDirection,
   Size,
   Theme,
@@ -25,13 +23,13 @@ import { Menu } from './menu'
 /** 注入到 WebView 的 RPC 桥接脚本 */
 const RPC_BRIDGE_SCRIPT = `
 (function() {
-  if (window.__nodeWebview) return;
+  if (window.__taowry) return;
   var counter = 0;
   var callbacks = {};       // WebView→Host 请求的 pending callbacks
   var rpcHandlers = {};     // Host→WebView 的 request handlers
   var messageHandlers = {}; // Host→WebView 的消息监听
 
-  window.__nodeWebview = {
+  window.__taowry = {
     defineRPC: function(config) {
       config = config || {};
       if (config.requests) {
@@ -142,7 +140,6 @@ export default class BrowserWindow<T extends RPCInterface = any> {
   private _rpc?: HostRPCInstance<T>
   private rpcHandlers: Map<string, RpcHandler> = new Map()
   private _rpcMessageListeners: Record<string, Function[]> = {}
-  private _protocolHandler?: ProtocolHandler
 
   constructor(label: string, props: BrowserWindowAttributes<T> = {}) {
     const app = getCurrentApplication()
@@ -189,51 +186,13 @@ export default class BrowserWindow<T extends RPCInterface = any> {
       })
     })
 
-    // 监听 views:// 协议请求
-    this.on('protocolRequest' as any, async (request: ProtocolRequest) => {
-      if (!this._protocolHandler) {
-        await this.send('protocol_response', {
-          requestId: request.requestId,
-          statusCode: 404,
-          mimeType: 'text/plain',
-          data: BrowserWindow._encodeToBase64('No protocol handler registered')
-        })
-        return
-      }
-      try {
-        const response = await this._protocolHandler(request)
-        await this.send('protocol_response', {
-          requestId: request.requestId,
-          statusCode: response.statusCode ?? 200,
-          mimeType: response.mimeType ?? 'application/octet-stream',
-          headers: response.headers,
-          data: BrowserWindow._encodeToBase64(response.data)
-        })
-      } catch (err: any) {
-        await this.send('protocol_response', {
-          requestId: request.requestId,
-          statusCode: 500,
-          mimeType: 'text/plain',
-          data: BrowserWindow._encodeToBase64(err?.message || String(err))
-        })
-      }
-    })
-
     // 处理 props.rpc：创建 RPC 实例
     if (props.rpc) {
       this._rpc = this.createRPC(props.rpc)
     }
 
-    // 处理 props.protocolHandler：提取函数，布尔值传给 Rust
-    if (props.protocolHandler) {
-      if (typeof props.protocolHandler === 'function') {
-        this._protocolHandler = props.protocolHandler
-      }
-    }
-
-    // 创建窗口时始终向 Rust 传递 protocolHandler: true（注册协议）
-    const createProps: any = { ...props, protocolHandler: true }
     // 清除不可序列化的字段
+    const createProps: any = { ...props }
     delete createProps.rpc
     delete createProps.menu
 
@@ -420,18 +379,6 @@ export default class BrowserWindow<T extends RPCInterface = any> {
     this.rpcHandlers.delete(method)
   }
 
-  // ===== Protocol =====
-
-  /** 注册或替换 views:// 协议 handler */
-  setProtocolHandler(handler: ProtocolHandler): void {
-    this._protocolHandler = handler
-  }
-
-  /** 移除协议 handler */
-  removeProtocolHandler(): void {
-    this._protocolHandler = undefined
-  }
-
   // ===== RPC: Node → WebView =====
 
   /**
@@ -441,7 +388,7 @@ export default class BrowserWindow<T extends RPCInterface = any> {
   sendToWebview(event: string, data?: any): void {
     const payload = JSON.stringify(data === undefined ? null : data)
     this.evaluateScript(
-      `window.__nodeWebview && window.__nodeWebview._handleSend(${JSON.stringify(event)}, ${payload})`
+      `window.__taowry && window.__taowry._handleSend(${JSON.stringify(event)}, ${payload})`
     )
   }
 
@@ -702,14 +649,6 @@ export default class BrowserWindow<T extends RPCInterface = any> {
 
   private send<T = any>(method: string, data?: any): Promise<T> {
     return this.app._sendIoMessage({ method, data, label: this.label })
-  }
-
-  /** 将字符串或 Uint8Array 编码为 base64 */
-  private static _encodeToBase64(data: string | Uint8Array): string {
-    if (typeof data === 'string') {
-      return Buffer.from(data, 'utf-8').toString('base64')
-    }
-    return Buffer.from(data).toString('base64')
   }
 
   private get app() {

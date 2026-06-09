@@ -839,19 +839,17 @@ fn apply_webview_options<'a>(
     prevent_default
   });
 
-  // 注册 views:// 自定义协议
+  // 注册 views:// 自定义协议（透传给 Node.js 处理，Rust 不做额外转换）
   let protocol_label = label.clone();
   let protocol_state_clone = protocol_state.clone();
   builder = builder.with_asynchronous_custom_protocol(
     "views".into(),
     move |_webview_id, request, responder| {
-      // 1. 生成 request_id 并存储 responder
       let request_id = protocol_state_clone
         .lock()
         .expect("protocol state lock poisoned")
         .insert(responder);
 
-      // 2. 提取请求信息
       let uri = request.uri().to_string();
       let method = request.method().to_string();
       let headers: Value = {
@@ -870,7 +868,6 @@ fn apply_webview_options<'a>(
         BASE64.encode(&body)
       };
 
-      // 3. 发送 protocolRequest 事件到 Node.js
       send_window_event(
         &protocol_label,
         "protocolRequest",

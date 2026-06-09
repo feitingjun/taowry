@@ -14,7 +14,7 @@ for target in "${targets[@]}"; do
   echo "Building for target: $target"
   cargo build --target "$target" --release
   
-  old_binary="node-webview"
+  old_binary="taowry"
   new_binary=$target
   
   # Windows 目标添加 .exe 后缀
@@ -25,10 +25,11 @@ for target in "${targets[@]}"; do
 
   mv target/$target/release/$old_binary binary/$new_binary
 
-  # 本地开发时复制到 src/ts/ 目录
+  # 本地开发时复制到 .binary/ 目录（与 postinstall 统一位置）
   current_target=$(rustc -vV | grep host | awk '{print $2}')
   if [[ "$target" == "$current_target" ]]; then
-    cp binary/$new_binary src/ts/$old_binary
-    echo "Copied to src/ts/$old_binary"
+    mkdir -p .binary
+    cp binary/$new_binary .binary/$old_binary
+    echo "Copied to .binary/$old_binary"
   fi
 done

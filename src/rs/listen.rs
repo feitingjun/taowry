@@ -153,7 +153,7 @@ fn handle_rpc_invoke(app: &mut Application, ioc_id: &str, label: &str, data: &Va
 
       let payload = json!({ "id": rpc_id, "method": method, "data": rpc_data });
       let js = format!(
-        "window.__nodeWebview && window.__nodeWebview._handleInvoke({})",
+        "window.__taowry && window.__taowry._handleInvoke({})",
         serde_json::to_string(&payload).unwrap()
       );
       window.evaluate_script(&js).map_err(|e| e.to_string())
@@ -186,7 +186,7 @@ fn handle_rpc_resolve(app: &Application, id: &str, label: &str, data: &Value) {
         None => "null".to_string(),
       };
       let js = format!(
-        "window.__nodeWebview && window.__nodeWebview._resolve({}, {}, {})",
+        "window.__taowry && window.__taowry._resolve({}, {}, {})",
         rpc_id, data_json, error_json
       );
       window.evaluate_script(&js).map_err(|e| e.to_string())
@@ -213,7 +213,7 @@ fn handle_rpc_send(app: &Application, id: &str, label: &str, data: &Value) {
       let event_json = serde_json::to_string(event).unwrap();
       let data_json = serde_json::to_string(rpc_data).unwrap();
       let js = format!(
-        "window.__nodeWebview && window.__nodeWebview._handleSend({}, {})",
+        "window.__taowry && window.__taowry._handleSend({}, {})",
         event_json, data_json
       );
       window.evaluate_script(&js).map_err(|e| e.to_string())
@@ -226,7 +226,7 @@ fn handle_rpc_send(app: &Application, id: &str, label: &str, data: &Value) {
 }
 
 /// 处理 views:// 协议响应
-/// Node 端 handler 处理完请求后，将结果发回 Rust，由 Rust 调用 responder.respond()
+/// Rust 端仅做透传：将 Node 返回的 statusCode、headers、body 原样转发给 WebView，不做额外转换
 fn handle_protocol_response(app: &Application, id: &str, label: &str, data: &Value) {
   let result = app
     .get_window(label)
@@ -241,10 +241,6 @@ fn handle_protocol_response(app: &Application, id: &str, label: &str, data: &Val
         .get("statusCode")
         .and_then(Value::as_u64)
         .unwrap_or(200) as u16;
-      let mime_type = data
-        .get("mimeType")
-        .and_then(Value::as_str)
-        .unwrap_or("application/octet-stream");
       let body_base64 = data
         .get("data")
         .and_then(Value::as_str)
@@ -256,15 +252,11 @@ fn handle_protocol_response(app: &Application, id: &str, label: &str, data: &Val
           .decode(body_base64)
           .map_err(|e| format!("invalid base64 data: {}", e))?
       };
-      let custom_headers = data.get("headers");
 
-      // 构建 HTTP Response
-      let mut response_builder = wry::http::Response::builder()
-        .status(status_code)
-        .header("Content-Type", mime_type)
-        .header("Access-Control-Allow-Origin", "*");
+      // 透传 Node 端返回的 headers，不添加额外 header
+      let mut response_builder = wry::http::Response::builder().status(status_code);
 
-      if let Some(headers_obj) = custom_headers.and_then(Value::as_object) {
+      if let Some(headers_obj) = data.get("headers").and_then(Value::as_object) {
         for (key, value) in headers_obj {
           if let Some(v) = value.as_str() {
             response_builder = response_builder.header(key.as_str(), v);

@@ -4,5 +4,5 @@
 /package-lock.json
 /Cargo.lock
 /binary
-/src/ts/node-webview
+/.binary
 bun.lock

@@ -5,11 +5,22 @@
  */
 const { platform, arch } = require('process')
 const { existsSync, createWriteStream, mkdirSync } = require('fs')
-const { join } = require('path')
+const { join, dirname } = require('path')
 const https = require('https')
 
-const REPO = 'feitingjun/node-webview'
+const REPO = 'feitingjun/taowry'
 const BASE_URL = `https://github.com/${REPO}/releases/latest/download`
+
+/** 获取消费者项目根目录（即运行 npm install 的项目根） */
+function getProjectRoot() {
+  let dir = __dirname
+  while (dir !== dirname(dir)) {
+    // 跳过 node_modules 内的 package.json
+    if (!dir.includes('node_modules') && existsSync(join(dir, 'package.json'))) return dir
+    dir = dirname(dir)
+  }
+  return process.cwd()
+}
 
 // 检测目标平台三元组
 function getTarget() {
@@ -31,7 +42,7 @@ function getTarget() {
 // 获取输出文件名
 function getBinaryName() {
   const suffix = platform === 'win32' ? '.exe' : ''
-  return `node-webview${suffix}`
+  return `taowry${suffix}`
 }
 
 // 跟随重定向下载
@@ -55,10 +66,8 @@ async function main() {
   const remoteFile = `${target}${suffix}`
   const localFile = getBinaryName()
 
-  // 目标目录: 优先 dist/(消费者安装场景), 否则 src/ts/(本地开发)
-  const distDir = join(__dirname, '..', 'dist')
-  const srcTsDir = join(__dirname, '..', 'src', 'ts')
-  const outDir = existsSync(distDir) ? distDir : srcTsDir
+  // 目标目录: 消费者项目根目录下的 .binary/（不在 node_modules 内）
+  const outDir = join(getProjectRoot(), '.binary')
 
   if (!existsSync(outDir)) {
     mkdirSync(outDir, { recursive: true })
@@ -68,14 +77,14 @@ async function main() {
 
   // 如果已存在则跳过
   if (existsSync(outPath)) {
-    console.log(`\x1b[32m[node-webview] 二进制文件已存在: ${outPath}\x1b[0m`)
+    console.log(`\x1b[32m[taowry] 二进制文件已存在: ${outPath}\x1b[0m`)
     return
   }
 
   const url = `${BASE_URL}/${remoteFile}`
-  console.log(`\x1b[32m[node-webview] 正在下载二进制文件...\x1b[0m`)
-  console.log(`\x1b[32m[node-webview] 平台: ${target}\x1b[0m`)
-  console.log(`\x1b[32m[node-webview] URL: ${url}\x1b[0m`)
+  console.log(`\x1b[32m[taowry] 正在下载二进制文件...\x1b[0m`)
+  console.log(`\x1b[32m[taowry] 平台: ${target}\x1b[0m`)
+  console.log(`\x1b[32m[taowry] URL: ${url}\x1b[0m`)
 
   try {
     const res = await download(url)
@@ -86,10 +95,10 @@ async function main() {
       stream.on('error', reject)
       res.on('error', reject)
     })
-    console.log(`\x1b[32m[node-webview] 下载完成: ${outPath}\x1b[0m`)
+    console.log(`\x1b[32m[taowry] 下载完成: ${outPath}\x1b[0m`)
   } catch (err) {
-    console.error(`\x1b[33m[node-webview] 下载失败: ${err.message}\x1b[0m`)
-    console.error(`\x1b[33m[node-webview] 如果是本地开发，请手动运行 npm run build\x1b[0m`)
+    console.error(`\x1b[33m[taowry] 下载失败: ${err.message}\x1b[0m`)
+    console.error(`\x1b[33m[taowry] 如果是本地开发，请手动运行 bun run build\x1b[0m`)
     // postinstall 失败不阻塞安装(本地开发场景)
   }
 }

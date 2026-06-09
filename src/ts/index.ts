@@ -13,7 +13,7 @@ export const getWindow = <T extends RPCInterface = any>(label: string): BrowserW
  *
  * @example
  * ```typescript
- * import { defineRPC, RPCInterface, BrowserWindow } from 'node-webview'
+ * import { defineRPC, RPCInterface, BrowserWindow } from 'taowry'
  *
  * interface MyRPC extends RPCInterface {
  *   host: {
