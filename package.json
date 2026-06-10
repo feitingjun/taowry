@@ -20,14 +20,14 @@
   },
   "scripts": {
     "start": "bun ./test/index.ts",
-    "build": "cargo build --release && cp target/release/taowry src/ts/taowry",
-    "build:all": "./build.sh",
-    "postinstall": "node scripts/postinstall.js"
+    "build": "napi build --platform --release && tsc",
+    "build:all": "./build.sh"
   },
   "author": "",
   "license": "ISC",
   "description": "基于 tao + wry 的跨平台 WebView 窗口库，支持 Node.js 和 Bun",
   "devDependencies": {
+    "@napi-rs/cli": "^3.7.0",
     "@types/bun": "^1.3.14",
     "@types/react": "^19.2.16",
     "@types/react-dom": "^19.2.3",

@@ -1,11 +1,43 @@
-import { type ChildProcessWithoutNullStreams, spawn } from 'child_process'
-import { getBinaryPath, uid } from './utils'
+import { uid } from './utils'
 import type { AppEvent, Monitor, ReceiveMessage, SendMessage, RPCInterface, MenuOptions, ProtocolHandler, ApplicationOptions } from './types'
 import type BrowserWindow from './window'
 import { Menu } from './menu'
 
-/** IPC 消息前缀，用于在 stdin/stdout 中区分 JSON 消息和普通输出 */
-const IO_CHANNEL_PREFIX = '_ioc:'
+// 加载 native 模块
+interface NativeModule {
+  start: (callback: (json: string) => void) => void
+  sendCommand: (id: string, method: string, label: string, data: string) => void
+  evaluateScript: (id: string, label: string, script: string) => void
+  rpcInvoke: (id: string, label: string, method: string, data: string) => void
+  rpcResolve: (id: string, label: string, rpcId: number, data: string, error?: string | null) => void
+  rpcSend: (id: string, label: string, event: string, data: string) => void
+  protocolResponse: (id: string, label: string, requestId: string, statusCode: number, headers: string, body: string) => void
+}
+
+function loadNative(): NativeModule {
+  const { platform, arch } = process
+  const candidates = [
+    `./index.${platform}-${arch}.node`,
+    `./taowry.${platform}-${arch}.node`,
+  ]
+  for (const name of candidates) {
+    try { return require(name) } catch { /* continue */ }
+  }
+  // 尝试通过 require.resolve 查找
+  const path = require('path')
+  const fs = require('fs')
+  const searchDirs = [__dirname, path.join(__dirname, '..'), path.join(__dirname, '..', '..'), process.cwd()]
+  for (const dir of searchDirs) {
+    for (const name of candidates) {
+      const p = path.join(dir, name)
+      if (fs.existsSync(p)) return require(p)
+    }
+  }
+  throw new Error(`[taowry] 找不到 native 模块 (.node 文件)，请运行 napi build --platform --release 编译`)
+}
+
+const native = loadNative()
+
 /** 用于存储全局唯一的 Application 实例 */
 const CURRENT_APP_KEY = '__taowryApp'
 
@@ -33,74 +65,51 @@ function encodeToBase64(data: string | Uint8Array): string {
 
 /**
  * Application - 应用实例管理器
- * 负责启动 Rust 子进程、管理 IPC 通信和应用生命周期
+ * 通过 napi 原生模块与 Rust 端通信，管理应用生命周期
  */
 export default class Application {
   private callbacks: Record<string, PendingCallback> = {}
   private listeners: Record<string, Record<string, Listener[]>> = {}
   private windows: Record<string, BrowserWindow> = {}
-  private childProcess?: ChildProcessWithoutNullStreams
   /** 就绪前排队的消息 */
   private queue: QueuedMessage[] = []
-  /** stdout 读取缓冲区 */
-  private stdoutBuffer = ''
-  private runPromise?: Promise<number | null>
-  /** Rust 子进程是否就绪 */
+  /** Rust 事件循环是否就绪 */
   private ready = false
   /** views:// 自定义协议 handler（应用级，所有窗口共享） */
   private _protocol?: ProtocolHandler
-  /** 用户指定的二进制文件目录 */
-  private _binaryDir?: string
 
   constructor(options: ApplicationOptions = {}) {
     const current = getCurrentApplication()
-    if (current && current.childProcess && !current.childProcess.killed) {
+    if (current && current.ready) {
       throw new Error('Application already exists')
     }
     ;(globalThis as any)[CURRENT_APP_KEY] = this
     if (options.protocol) {
       this._protocol = options.protocol
     }
-    if (options.binaryDir) {
-      this._binaryDir = options.binaryDir
-    }
   }
 
-  /** 启动 Rust 子进程，返回退出码 */
-  async run(): Promise<number | null> {
-    if (this.runPromise) return this.runPromise
-
-    const binaryPath = getBinaryPath(this._binaryDir)
-    this.childProcess = spawn(binaryPath, [], {
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
-
-    this.childProcess.stdout.on('data', data => this.handleStdout(data))
-    this.childProcess.stderr.on('data', data => {
-      const message = data.toString()
-      if (message.trim()) console.error(message)
-    })
-    this.childProcess.on('error', error => {
-      this.rejectAll(error)
-    })
-
-    this.runPromise = new Promise(resolve => {
-      this.childProcess?.on('exit', code => {
-        this.ready = false
-        this.rejectAll(new Error(`Rust application exited with code ${code}`))
-        resolve(code)
+  /** 启动 Rust 事件循环 */
+  async run(): Promise<void> {
+    return new Promise<void>(resolve => {
+      native.start((json: string) => {
+        try {
+          const msg: ReceiveMessage = JSON.parse(json)
+          this.handleIoMessage(msg)
+          // ready 事件触发时 resolve
+          if (msg.type === 'appEvent' && msg.method === 'ready') {
+            resolve()
+          }
+        } catch (e) {
+          console.error('[taowry] Failed to parse message:', json, e)
+        }
       })
     })
-
-    return this.runPromise
   }
 
   /** 退出应用 */
   quit(): Promise<void> {
-    if (!this.childProcess || this.childProcess.killed) {
-      this.ready = false
-      return Promise.resolve()
-    }
+    if (!this.ready) return Promise.resolve()
     return this._sendIoMessage({ label: 'app', method: 'app_quit' })
   }
 
@@ -185,16 +194,54 @@ export default class Application {
     delete this.windows[label]
   }
 
-  /** @internal 发送 IPC 消息到 Rust 子进程，返回 Promise */
+  /** @internal 发送命令到 Rust 端，返回 Promise */
   _sendIoMessage(msg: SendMessage): Promise<any> {
     return new Promise((resolve, reject) => {
       msg.id = uid()
-      if (!this.childProcess || this.childProcess.killed || !this.ready) {
+      if (!this.ready) {
         this.queue.push({ msg, resolve, reject })
         return
       }
       this.writeMessage(msg, resolve, reject)
     })
+  }
+
+  /** @internal 执行 WebView JS 并异步返回结果 */
+  _evaluateScript(label: string, script: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const id = uid()
+      this.callbacks[id] = { resolve, reject }
+      try {
+        native.evaluateScript(id, label, script)
+      } catch (error) {
+        delete this.callbacks[id]
+        reject(error)
+      }
+    })
+  }
+
+  /** @internal Host→WebView RPC 请求（延迟响应） */
+  _rpcInvoke(label: string, method: string, data: any): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const id = uid()
+      this.callbacks[id] = { resolve, reject }
+      try {
+        native.rpcInvoke(id, label, method, JSON.stringify(data ?? null))
+      } catch (error) {
+        delete this.callbacks[id]
+        reject(error)
+      }
+    })
+  }
+
+  /** @internal Host 回复 WebView→Host RPC 请求 */
+  _rpcResolve(label: string, rpcId: number, data: any, error?: string): void {
+    native.rpcResolve(uid(), label, rpcId, JSON.stringify(data ?? null), error ?? null)
+  }
+
+  /** @internal Host→WebView 单向 RPC 消息 */
+  _rpcSend(label: string, event: string, data: any): void {
+    native.rpcSend(uid(), label, event, JSON.stringify(data ?? null))
   }
 
   on<T extends keyof AppEvent>(event: T, callback: (data: AppEvent[T]) => void): () => void
@@ -248,48 +295,30 @@ export default class Application {
     resolve: PendingCallback['resolve'],
     reject: PendingCallback['reject']
   ) {
-    if (!this.childProcess || this.childProcess.killed) {
-      reject(new Error('Application is not running'))
-      return
-    }
     this.callbacks[msg.id as string] = { resolve, reject }
-    this.childProcess.stdin.write(`${IO_CHANNEL_PREFIX}${JSON.stringify(msg)}\n`, error => {
-      if (!error) return
+    try {
+      native.sendCommand(
+        msg.id as string,
+        msg.method,
+        msg.label,
+        JSON.stringify(msg.data ?? null)
+      )
+    } catch (error) {
       delete this.callbacks[msg.id as string]
       reject(error)
-    })
+    }
   }
 
   private flushQueue() {
     const queue = this.queue.splice(0)
-    queue.forEach(({ msg, resolve, reject }) => this.writeMessage(msg, resolve, reject))
-  }
-
-  private handleStdout(data: Buffer) {
-    this.stdoutBuffer += data.toString()
-    let newlineIndex = this.stdoutBuffer.indexOf('\n')
-    while (newlineIndex >= 0) {
-      const line = this.stdoutBuffer.slice(0, newlineIndex)
-      this.stdoutBuffer = this.stdoutBuffer.slice(newlineIndex + 1)
-      this.handleLine(line)
-      newlineIndex = this.stdoutBuffer.indexOf('\n')
-    }
-  }
-
-  private handleLine(line: string) {
-    if (!line.startsWith(IO_CHANNEL_PREFIX)) {
-      if (line.trim()) console.log(line)
-      return
-    }
-
-    let msg: ReceiveMessage
-    try {
-      msg = JSON.parse(line.slice(IO_CHANNEL_PREFIX.length))
-    } catch (error) {
-      console.error(`响应消息格式错误：${line}`)
-      return
-    }
-    this.handleIoMessage(msg)
+    queue.forEach((item: any) => {
+      if (item._protocolSend) {
+        // 排队的协议响应，直接发送
+        item._protocolSend()
+      } else {
+        this.writeMessage(item.msg, item.resolve, item.reject)
+      }
+    })
   }
 
   private handleIoMessage(msg: ReceiveMessage) {
@@ -338,66 +367,52 @@ export default class Application {
     this._protocol = undefined
   }
 
-  /** 处理 views:// 协议请求（内部方法） */
+  /** 处理 views:// 协议请求（内部方法，直接使用 native.protocolResponse） */
   private async _handleProtocolRequest(
     label: string,
     data: { requestId: string; uri: string; method: string; headers: Record<string, string>; body?: string }
   ) {
+    const respond = (statusCode: number, headers: Record<string, string>, body: string) => {
+      const id = uid()
+      const send = () => native.protocolResponse(id, label, data.requestId, statusCode, JSON.stringify(headers), body)
+      if (!this.ready) {
+        // 未就绪时排队，ready 后发送
+        this.queue.push({
+          msg: { id, method: '__protocolResponse__', label, data: null },
+          resolve: () => {},
+          reject: () => {},
+        })
+        // 将实际发送存储在排队消息中
+        const last = this.queue[this.queue.length - 1] as any
+        last._protocolSend = send
+      } else {
+        send()
+      }
+    }
+
     if (!this._protocol) {
-      await this._sendIoMessage({
-        method: 'protocol_response', label,
-        data: {
-          requestId: data.requestId,
-          statusCode: 404,
-          headers: { 'content-type': 'text/plain' },
-          data: encodeToBase64('No protocol handler registered')
-        }
-      })
+      respond(404, { 'content-type': 'text/plain' }, encodeToBase64('No protocol handler registered'))
       return
     }
     try {
       const requestHeaders = new Headers()
       if (data.headers) {
-        for (const [k, v] of Object.entries(data.headers)) {
-          requestHeaders.append(k, v)
-        }
+        for (const [k, v] of Object.entries(data.headers)) requestHeaders.append(k, v)
       }
-      const requestInit: RequestInit = {
-        method: data.method,
-        headers: requestHeaders,
-      }
+      const requestInit: RequestInit = { method: data.method, headers: requestHeaders }
       if (data.body && data.method !== 'GET' && data.method !== 'HEAD') {
         requestInit.body = new Uint8Array(Buffer.from(data.body, 'base64'))
       }
       const request = new Request(data.uri, requestInit)
-
       const response = await this._protocol(request)
 
       const body = new Uint8Array(await response.arrayBuffer())
       const responseHeaders: Record<string, string> = {}
-      response.headers.forEach((value, key) => {
-        responseHeaders[key] = value
-      })
+      response.headers.forEach((value, key) => { responseHeaders[key] = value })
 
-      await this._sendIoMessage({
-        method: 'protocol_response', label,
-        data: {
-          requestId: data.requestId,
-          statusCode: response.status,
-          headers: responseHeaders,
-          data: encodeToBase64(body)
-        }
-      })
+      respond(response.status, responseHeaders, encodeToBase64(body))
     } catch (err: any) {
-      await this._sendIoMessage({
-        method: 'protocol_response', label,
-        data: {
-          requestId: data.requestId,
-          statusCode: 500,
-          headers: { 'content-type': 'text/plain' },
-          data: encodeToBase64(err?.message || String(err))
-        }
-      })
+      respond(500, { 'content-type': 'text/plain' }, encodeToBase64(err?.message || String(err)))
     }
   }
 

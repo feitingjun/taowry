@@ -3,17 +3,16 @@
 //! 包含 Application 结构体和事件循环实现，
 //! 管理窗口、菜单、托盘的生命周期。
 
+use crate::channel;
+use crate::command::{handle_command, Command};
 use crate::event::handle_window_event;
-use crate::listen::{
-  handle_listen, send_app_event, send_io_message, send_window_event, IO_CHANNEL_PREFIX,
-};
 use crate::protocol::ProtocolState;
 use crate::rpc::{parse_ipc_message, RpcMessageType, RpcState};
 use crate::window::{load_tao_icon, load_tray_icon, BrowserWindow};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::io::{self, BufRead};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tao::dpi::{LogicalPosition, LogicalSize, Size};
@@ -30,9 +29,10 @@ use wry::{DragDropEvent, NewWindowResponse, PageLoadEvent, Rect, WebViewBuilder}
 
 /// 事件循环中的用户事件类型
 pub enum Action {
-  ForwardMessage(String),
+  ForwardCommand(Command),
   TrayIconEvent(TrayIconEvent),
   MenuEvent(MenuEvent),
+  Ready,
 }
 
 /// 被管理的菜单类型（顶层菜单或子菜单）
@@ -73,70 +73,9 @@ impl Application {
     }
   }
 
-  pub fn run(mut self) -> ! {
-    let mut builder = EventLoopBuilder::<Action>::with_user_event();
-    let event_loop = builder.build();
-    let proxy = event_loop.create_proxy();
-    self.proxy = Some(proxy.clone());
-    self.listen(proxy.clone());
-    Self::install_tray_handlers(proxy);
-
-    event_loop.run(move |event, event_loop, control_flow| {
-      *control_flow = ControlFlow::Wait;
-      match event {
-        Event::NewEvents(StartCause::Init) => {
-          send_app_event("ready", Value::Null);
-        }
-        Event::UserEvent(Action::ForwardMessage(string)) => {
-          handle_listen(&mut self, string.as_str(), event_loop, control_flow);
-        }
-        Event::UserEvent(Action::TrayIconEvent(event)) => {
-          self.handle_tray_event(event);
-        }
-        Event::UserEvent(Action::MenuEvent(event)) => {
-          self.handle_menu_event(event);
-        }
-        Event::WindowEvent {
-          window_id, event, ..
-        } => {
-          handle_window_event(&mut self, event_loop, window_id, event);
-        }
-        Event::LoopDestroyed => {
-          send_app_event("quit", Value::Null);
-        }
-        _ => {}
-      }
-    });
-  }
-
-  fn listen(&self, proxy: EventLoopProxy<Action>) {
-    thread::spawn(move || {
-      let stdin = io::stdin();
-      for line in stdin.lock().lines() {
-        match line {
-          Ok(line) => {
-            if let Some(message) = line.strip_prefix(IO_CHANNEL_PREFIX) {
-              let _ = proxy.send_event(Action::ForwardMessage(message.to_string()));
-            }
-          }
-          Err(error) => {
-            eprintln!("failed to read ipc message: {}", error);
-            break;
-          }
-        }
-      }
-    });
-  }
-
-  fn install_tray_handlers(proxy: EventLoopProxy<Action>) {
-    let tray_proxy = proxy.clone();
-    TrayIconEvent::set_event_handler(Some(move |event| {
-      let _ = tray_proxy.send_event(Action::TrayIconEvent(event));
-    }));
-
-    MenuEvent::set_event_handler(Some(move |event| {
-      let _ = proxy.send_event(Action::MenuEvent(event));
-    }));
+  /// 创建事件循环（必须在主线程调用，macOS 要求）
+  pub fn create_event_loop() -> tao::event_loop::EventLoop<Action> {
+    EventLoopBuilder::<Action>::with_user_event().build()
   }
 
   pub fn get_window(&self, label: &str) -> Option<&BrowserWindow> {
@@ -435,25 +374,15 @@ impl Application {
       .position(|candidate| &candidate == monitor)
   }
 
-  fn handle_tray_event(&self, event: TrayIconEvent) {
+  pub fn handle_tray_event_pub(&self, event: TrayIconEvent) {
     let label = event.id().as_ref().to_string();
     let (method, data) = tray_event_payload(event);
-    send_io_message(json!({
-      "type": "trayEvent",
-      "label": label,
-      "method": method,
-      "data": data
-    }));
+    channel::send_tray_event(&label, &method, data);
   }
 
-  fn handle_menu_event(&self, event: MenuEvent) {
+  pub fn handle_menu_event_pub(&self, event: MenuEvent) {
     let item_id = event.id().as_ref().to_string();
-    send_io_message(json!({
-      "type": "menuEvent",
-      "label": item_id,
-      "method": "click",
-      "data": { "id": item_id }
-    }));
+    channel::send_menu_event(&item_id, json!({ "id": item_id }));
   }
 
   fn build_menu_item(
@@ -729,16 +658,11 @@ fn apply_webview_options<'a>(
     if let Some(rpc_msg) = parse_ipc_message(&body) {
       match rpc_msg.msg_type {
         RpcMessageType::Request => {
-          send_io_message(json!({
-            "type": "windowEvent",
-            "label": &ipc_label,
-            "method": "rpcRequest",
-            "data": {
-              "rpcId": rpc_msg.id,
-              "method": rpc_msg.method,
-              "data": rpc_msg.data
-            }
-          }));
+          channel::send_window_event(
+            &ipc_label,
+            "rpcRequest",
+            json!({ "rpcId": rpc_msg.id, "method": rpc_msg.method, "data": rpc_msg.data }),
+          );
         }
         RpcMessageType::Response => {
           // WebView 对 Host→WebView 请求的响应：
@@ -748,21 +672,9 @@ fn apply_webview_options<'a>(
             if let Ok(mut state) = ipc_rpc_state.lock() {
               if let Some(ioc_id) = state.resolve_host_request(rpc_id) {
                 if let Some(error) = &rpc_msg.error {
-                  send_io_message(json!({
-                    "id": ioc_id,
-                    "label": &ipc_label,
-                    "method": "rpc_invoke",
-                    "type": "response",
-                    "error": error
-                  }));
+                  channel::send_error(&ioc_id, &ipc_label, "rpc_invoke", error);
                 } else {
-                  send_io_message(json!({
-                    "id": ioc_id,
-                    "label": &ipc_label,
-                    "method": "rpc_invoke",
-                    "type": "response",
-                    "data": rpc_msg.data
-                  }));
+                  channel::send_response(&ioc_id, &ipc_label, "rpc_invoke", rpc_msg.data);
                 }
                 return;
               }
@@ -771,20 +683,16 @@ fn apply_webview_options<'a>(
           // 如果找不到对应的 pending 请求，忽略此响应
         }
         RpcMessageType::Send => {
-          send_io_message(json!({
-            "type": "windowEvent",
-            "label": &ipc_label,
-            "method": "rpcMessage",
-            "data": {
-              "event": rpc_msg.event,
-              "data": rpc_msg.data
-            }
-          }));
+          channel::send_window_event(
+            &ipc_label,
+            "rpcMessage",
+            json!({ "event": rpc_msg.event, "data": rpc_msg.data }),
+          );
         }
       }
     } else {
       // 非 RPC 消息，保持向后兼容
-      send_window_event(
+      channel::send_window_event(
         &ipc_label,
         "ipcMessage",
         json!({
@@ -801,7 +709,7 @@ fn apply_webview_options<'a>(
     .and_then(Value::as_bool)
     .unwrap_or(true);
   builder = builder.with_navigation_handler(move |url| {
-    send_window_event(&navigation_label, "navigation", json!({ "url": url }));
+    channel::send_window_event(&navigation_label, "navigation", json!({ "url": url }));
     navigation_allowed
   });
 
@@ -811,13 +719,13 @@ fn apply_webview_options<'a>(
     .and_then(Value::as_bool)
     .unwrap_or(true);
   builder = builder.with_new_window_req_handler(move |url, _features| {
-    send_window_event(&new_window_label, "newWindow", json!({ "url": url }));
+    channel::send_window_event(&new_window_label, "newWindow", json!({ "url": url }));
     if new_window_allowed { NewWindowResponse::Allow } else { NewWindowResponse::Deny }
   });
 
   let title_label = label.clone();
   builder = builder.with_document_title_changed_handler(move |title| {
-    send_window_event(&title_label, "documentTitleChanged", json!({ "title": title }));
+    channel::send_window_event(&title_label, "documentTitleChanged", json!({ "title": title }));
   });
 
   let load_label = label.clone();
@@ -826,7 +734,7 @@ fn apply_webview_options<'a>(
       PageLoadEvent::Started => "started",
       PageLoadEvent::Finished => "finished",
     };
-    send_window_event(&load_label, "pageLoad", json!({ "event": event, "url": url }));
+    channel::send_window_event(&load_label, "pageLoad", json!({ "event": event, "url": url }));
   });
 
   let drag_label = label.clone();
@@ -835,7 +743,7 @@ fn apply_webview_options<'a>(
     .and_then(Value::as_bool)
     .unwrap_or(false);
   builder = builder.with_drag_drop_handler(move |event| {
-    send_window_event(&drag_label, "dragDrop", drag_drop_payload(event));
+    channel::send_window_event(&drag_label, "dragDrop", drag_drop_payload(event));
     prevent_default
   });
 
@@ -868,7 +776,7 @@ fn apply_webview_options<'a>(
         BASE64.encode(&body)
       };
 
-      send_window_event(
+      channel::send_window_event(
         &protocol_label,
         "protocolRequest",
         json!({
@@ -895,7 +803,7 @@ fn apply_webview_options<'a>(
     if let Some(download_path) = &download_path {
       *path = std::path::PathBuf::from(download_path);
     }
-    send_window_event(
+    channel::send_window_event(
       &download_start_label,
       "downloadStarted",
       json!({ "url": url, "path": path.to_string_lossy() }),
@@ -905,7 +813,7 @@ fn apply_webview_options<'a>(
 
   let download_done_label = label;
   builder = builder.with_download_completed_handler(move |url, path, success| {
-    send_window_event(
+    channel::send_window_event(
       &download_done_label,
       "downloadCompleted",
       json!({

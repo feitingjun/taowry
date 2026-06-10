@@ -4,7 +4,7 @@
 //! 包括移动、缩放、焦点、光标、主题等事件。
 
 use crate::application::Application;
-use crate::listen::send_window_event;
+use crate::channel;
 use serde_json::{json, Value};
 use tao::event::{
   ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent,
@@ -25,70 +25,70 @@ pub fn handle_window_event(
 
   match event {
     WindowEvent::CloseRequested => {
-      send_window_event(&label, "close", Value::Null);
+      channel::send_window_event(&label, "close", Value::Null);
       app.close_window(&label);
     }
     WindowEvent::Destroyed => {
-      send_window_event(&label, "destroy", Value::Null);
+      channel::send_window_event(&label, "destroy", Value::Null);
     }
     WindowEvent::Moved(position) => {
-      send_window_event(&label, "move", json!({ "x": position.x, "y": position.y }));
+      channel::send_window_event(&label, "move", json!({ "x": position.x, "y": position.y }));
     }
     WindowEvent::Resized(size) => {
       if let Some(window) = app.get_window(&label) {
         let _ = window.resize_webview(tao::dpi::Size::Physical(size));
       }
-      send_window_event(
+      channel::send_window_event(
         &label,
         "resize",
         json!({ "width": size.width, "height": size.height }),
       );
     }
     WindowEvent::Focused(focused) => {
-      send_window_event(
+      channel::send_window_event(
         &label,
         if focused { "focus" } else { "blur" },
         Value::Null,
       );
     }
     WindowEvent::CursorMoved { position, .. } => {
-      send_window_event(&label, "cursorMove", json!({ "x": position.x, "y": position.y }));
+      channel::send_window_event(&label, "cursorMove", json!({ "x": position.x, "y": position.y }));
     }
     WindowEvent::CursorEntered { .. } => {
-      send_window_event(&label, "cursorEnter", Value::Null);
+      channel::send_window_event(&label, "cursorEnter", Value::Null);
     }
     WindowEvent::CursorLeft { .. } => {
-      send_window_event(&label, "cursorOut", Value::Null);
+      channel::send_window_event(&label, "cursorOut", Value::Null);
     }
     WindowEvent::ThemeChanged(theme) => {
-      send_window_event(&label, "theme", Value::String(theme_to_string(theme).to_string()));
+      channel::send_window_event(&label, "theme", Value::String(theme_to_string(theme).to_string()));
     }
     WindowEvent::DroppedFile(path) => {
-      send_window_event(
+      channel::send_window_event(
         &label,
         "droppedFile",
         json!({ "path": path.to_string_lossy().to_string() }),
       );
     }
     WindowEvent::HoveredFile(path) => {
-      send_window_event(
+      channel::send_window_event(
         &label,
         "hoveredFile",
         json!({ "path": path.to_string_lossy().to_string() }),
       );
     }
     WindowEvent::HoveredFileCancelled => {
-      send_window_event(&label, "hoveredFileCancelled", Value::Null);
+      channel::send_window_event(&label, "hoveredFileCancelled", Value::Null);
     }
     WindowEvent::ReceivedImeText(text) => {
-      send_window_event(&label, "receivedImeText", Value::String(text));
+      channel::send_window_event(&label, "receivedImeText", Value::String(text));
     }
     WindowEvent::KeyboardInput {
       event,
       is_synthetic,
       ..
     } => {
-      send_window_event(
+      channel::send_window_event(
         &label,
         "keyboardInput",
         json!({
@@ -101,7 +101,7 @@ pub fn handle_window_event(
       );
     }
     WindowEvent::ModifiersChanged(modifiers) => {
-      send_window_event(
+      channel::send_window_event(
         &label,
         "modifiersChanged",
         json!({
@@ -113,7 +113,7 @@ pub fn handle_window_event(
       );
     }
     WindowEvent::MouseWheel { delta, phase, .. } => {
-      send_window_event(
+      channel::send_window_event(
         &label,
         "mouseWheel",
         json!({
@@ -123,7 +123,7 @@ pub fn handle_window_event(
       );
     }
     WindowEvent::MouseInput { state, button, .. } => {
-      send_window_event(
+      channel::send_window_event(
         &label,
         "mouseInput",
         json!({
@@ -135,21 +135,21 @@ pub fn handle_window_event(
     WindowEvent::TouchpadPressure {
       pressure, stage, ..
     } => {
-      send_window_event(
+      channel::send_window_event(
         &label,
         "touchpadPressure",
         json!({ "pressure": pressure, "stage": stage }),
       );
     }
     WindowEvent::AxisMotion { axis, value, .. } => {
-      send_window_event(
+      channel::send_window_event(
         &label,
         "axisMotion",
         json!({ "axis": format!("{:?}", axis), "value": value }),
       );
     }
     WindowEvent::Touch(touch) => {
-      send_window_event(
+      channel::send_window_event(
         &label,
         "touch",
         json!({
@@ -167,7 +167,7 @@ pub fn handle_window_event(
       if let Some(window) = app.get_window(&label) {
         let _ = window.resize_webview(tao::dpi::Size::Physical(*new_inner_size));
       }
-      send_window_event(
+      channel::send_window_event(
         &label,
         "scaleFactorChanged",
         json!({
@@ -180,7 +180,7 @@ pub fn handle_window_event(
       );
     }
     WindowEvent::DecorationsClick => {
-      send_window_event(&label, "decorationsClick", Value::Null);
+      channel::send_window_event(&label, "decorationsClick", Value::Null);
     }
     _ => {
       let _ = event_loop;

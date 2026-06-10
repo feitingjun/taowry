@@ -1,13 +1,15 @@
 [package]
 name = "taowry"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 
-[[bin]]
-name = "taowry"
-path = "src/rs/main.rs"
+[lib]
+crate-type = ["cdylib"]
+path = "src/rs/lib.rs"
 
 [dependencies]
+napi = { version = "2", features = ["napi6", "serde-json"] }
+napi-derive = "2"
 base64 = "0.22"
 image = "0.25.2"
 serde = { version = "1.0.210", features = ["derive"] }
@@ -15,14 +17,17 @@ serde_json = "1.0.128"
 tao = "0.30.2"
 tray-icon = "0.16.0"
 uuid = { version = "1", features = ["v4"] }
-wry = { version="0.55.1", features = ["devtools"] }
+wry = { version = "0.55.1", features = ["devtools"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
 objc = "0.2"
 
+[build-dependencies]
+napi-build = "2"
+
 [profile.release]
 lto = true
 opt-level = 'z'
-codegen-units = 1 
+codegen-units = 1
 panic = 'abort'

@@ -157,18 +157,14 @@ export default class BrowserWindow<T extends RPCInterface = any> {
     this.on('rpcRequest' as any, (msg: { rpcId: number; method: string; data: any }) => {
       const handler = this.rpcHandlers.get(msg.method)
       if (!handler) {
-        this.send('rpc_resolve', {
-          id: msg.rpcId,
-          data: null,
-          error: `RPC method '${msg.method}' is not registered`
-        })
+        app._rpcResolve(this.label, msg.rpcId, null, `RPC method '${msg.method}' is not registered`)
         return
       }
       Promise.resolve()
         .then(() => handler(msg.data))
-        .then(result => this.send('rpc_resolve', { id: msg.rpcId, data: result }))
+        .then(result => app._rpcResolve(this.label, msg.rpcId, result))
         .catch(err =>
-          this.send('rpc_resolve', { id: msg.rpcId, data: null, error: err?.message || String(err) })
+          app._rpcResolve(this.label, msg.rpcId, null, err?.message || String(err))
         )
     })
 
@@ -323,18 +319,18 @@ export default class BrowserWindow<T extends RPCInterface = any> {
       }
     }
 
-    // 构建 requests 代理（调用 WebView 端方法，通过 Rust rpc_invoke 延迟响应）
+    // 构建 requests 代理（调用 WebView 端方法，通过 Rust rpcInvoke 延迟响应）
     const self = this
     const requestsProxy = new Proxy({} as any, {
       get(_, method: string) {
-        return (data: any) => self.send('rpc_invoke', { method, data })
+        return (data: any) => self.app._rpcInvoke(self.label, method, data)
       }
     })
 
-    // 构建 messages 代理（向 WebView 端发送消息，通过 Rust rpc_send）
+    // 构建 messages 代理（向 WebView 端发送消息，通过 Rust rpcSend）
     const messagesProxy = new Proxy({} as any, {
       get(_, event: string) {
-        return (data: any) => self.send('rpc_send', { event, data })
+        return (data: any) => self.app._rpcSend(self.label, event, data)
       }
     })
 
@@ -413,7 +409,7 @@ export default class BrowserWindow<T extends RPCInterface = any> {
     return this.send('evaluate_script', script)
   }
   evaluateScriptReturnResult(script: string): Promise<string> {
-    return this.send('evaluate_script_with_callback', script)
+    return getCurrentApplication()!._evaluateScript(this.label, script)
   }
   print(): Promise<void> {
     return this.send('print')

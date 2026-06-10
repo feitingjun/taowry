@@ -58,7 +58,7 @@ const win = new BrowserWindow<RPC>('main', {
   title: '测试',
   width: 600,
   height: 400,
-  url: 'views://app/index.html',
+  url: 'http://www.baidu.com',
   rpc: rpc,
   devtools: true
 })

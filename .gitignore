@@ -1,6 +1,7 @@
 /node_modules
 /target
 /dist
+*.node
 /package-lock.json
 /Cargo.lock
 /binary
