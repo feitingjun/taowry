@@ -1,6 +1,5 @@
 import { build } from 'bun'
 import { Application, BrowserWindow, defineRPC, type RPCSchema, Tray } from '../src/ts/index'
-import binary from '../.binary/taowry' with { type: 'file' }
 
 export type RPC = {
   host: RPCSchema<{
@@ -63,5 +62,13 @@ const win = new BrowserWindow<RPC>('main', {
   rpc: rpc,
   devtools: true
 })
+
+win.onClose(() => {
+  app.quit()
+})
+
+setTimeout(() => {
+  app.bounceDock()
+}, 2000)
 
 app.run()
