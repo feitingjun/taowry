@@ -20,7 +20,7 @@
   },
   "scripts": {
     "start": "bun ./test/index.ts",
-    "build": "napi build --platform --release && tsc",
+    "build": "napi build --platform --release",
     "build:all": "./build.sh"
   },
   "author": "",

@@ -58,12 +58,13 @@ const win = new BrowserWindow<RPC>('main', {
   title: '测试',
   width: 600,
   height: 400,
-  url: 'http://www.baidu.com',
+  url: 'views://localhost/index.html',
   rpc: rpc,
   devtools: true
 })
 
 win.onClose(() => {
+  console.log('关闭窗口')
   app.quit()
 })
 
@@ -71,4 +72,5 @@ setTimeout(() => {
   app.bounceDock()
 }, 2000)
 
-app.run()
+await app.run()
+console.log(111111111111)

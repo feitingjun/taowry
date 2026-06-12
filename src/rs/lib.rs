@@ -98,6 +98,7 @@ fn start(env: Env, callback: JsFunction) -> Result<()> {
         // 驱动 tao 事件循环，处理所有待处理事件后返回
         if let (Some(el), Some(app)) = (&mut MAIN_EVENT_LOOP, &mut MAIN_APP) {
           let start_time = Instant::now();
+          // ── Phase A: tao 事件分发 ──
           el.run_return(|event, target, control_flow| {
             match event {
               Event::NewEvents(StartCause::Init) => {
@@ -133,6 +134,14 @@ fn start(env: Env, callback: JsFunction) -> Result<()> {
               *control_flow = ControlFlow::Exit;
             }
           });
+
+          // ── Phase B (macOS): 排空 NSApp 事件 + CFRunLoop 源 ──
+          // WebKit (WKWebView) 依赖 NSApp 事件和 CFRunLoop 源（GCD dispatch、
+          // Mach port 通知）进行内部处理（网络→解析→渲染级联）。
+          // tao 的 run_return 只处理一轮事件就退出，留下未处理的 WebKit 工作。
+          // 没有这个 drain，每个级联步骤都要等 16ms 下一次 pump，导致页面无法加载。
+          #[cfg(target_os = "macos")]
+          drain_macos_events();
         }
       }
       Ok::<Vec<napi::JsUndefined>, napi::Error>(vec![])
@@ -233,6 +242,140 @@ fn protocol_response(id: String, label: String, request_id: String, status_code:
 
 pub(crate) fn set_global_proxy(proxy: EventLoopProxy<Action>) {
   unsafe { GLOBAL_PROXY = Some(proxy); }
+}
+
+/// 排空 macOS NSApp 非输入类事件 + CFRunLoop 源，确保 WebKit 级联事件被处理。
+///
+/// WebKit (WKWebView) 依赖 NSApp 事件和 CFRunLoop 源（GCD dispatch、Mach port
+/// 通知）进行内部处理。tao 的 run_return 处理一轮事件后就通过 [NSApp stop:] 退出，
+/// 留下未处理的 WebKit 工作。没有这个 drain，网络→解析→渲染级联的每一步都要等
+/// 16ms 下一次 pump 调用，导致内容渲染延迟甚至页面无法加载。
+///
+/// 交替执行：
+///   1. 排空立即可用的**非输入类** NSApp 事件
+///   2. 处理一个挂起的 CFRunLoop 源（CFRunLoopRunInMode）
+/// 直到两个队列都为空。
+///
+/// **重要：** 鼠标和键盘事件被排除在 drain mask 之外。
+/// 它们必须通过 tao 的 run_return（Phase A）处理，以确保 tao 的事件处理器
+/// 在窗口委托回调（如 windowShouldClose:）触发时处于活跃状态。
+#[cfg(target_os = "macos")]
+fn drain_macos_events() {
+  use cocoa::base::{id, nil};
+  use cocoa::foundation::NSString;
+  use objc::{msg_send, sel, sel_impl};
+
+  // CoreFoundation FFI — 处理 GCD/Mach-port 源
+  // CoreFoundation.framework 在 macOS 上始终可用，无需额外依赖
+  unsafe extern "C" {
+    static kCFRunLoopDefaultMode: *const std::ffi::c_void;
+    fn CFRunLoopRunInMode(
+      mode: *const std::ffi::c_void,
+      seconds: f64,
+      return_after_source_handled: u8,
+    ) -> i32;
+  }
+
+  /// CFRunLoopRunInMode 返回值：已处理一个源
+  const K_CF_RUN_LOOP_RUN_HANDLED_SOURCE: i32 = 4;
+  /// 安全上限：防止源不断产生新工作时无限循环
+  const MAX_DRAIN_ITERATIONS: usize = 500;
+
+  // NSEventMask 常量（u64 位掩码）
+  const NS_LEFT_MOUSE_DOWN: u64 = 1 << 1;
+  const NS_LEFT_MOUSE_UP: u64 = 1 << 2;
+  const NS_RIGHT_MOUSE_DOWN: u64 = 1 << 3;
+  const NS_RIGHT_MOUSE_UP: u64 = 1 << 4;
+  const NS_MOUSE_MOVED: u64 = 1 << 5;
+  const NS_LEFT_MOUSE_DRAGGED: u64 = 1 << 6;
+  const NS_RIGHT_MOUSE_DRAGGED: u64 = 1 << 7;
+  const NS_MOUSE_ENTERED: u64 = 1 << 8;
+  const NS_MOUSE_EXITED: u64 = 1 << 9;
+  const NS_KEY_DOWN: u64 = 1 << 10;
+  const NS_KEY_UP: u64 = 1 << 11;
+  const NS_FLAGS_CHANGED: u64 = 1 << 12;
+  const NS_SCROLL_WHEEL: u64 = 1 << 22;
+  const NS_OTHER_MOUSE_DOWN: u64 = 1 << 25;
+  const NS_OTHER_MOUSE_UP: u64 = 1 << 26;
+  const NS_OTHER_MOUSE_DRAGGED: u64 = 1 << 27;
+  const NS_ANY_EVENT_MASK: u64 = u64::MAX;
+
+  // 用户输入事件掩码 — 这些事件留在队列中由 Phase A (run_return) 处理
+  let user_input_mask: u64 = NS_LEFT_MOUSE_DOWN
+    | NS_LEFT_MOUSE_UP
+    | NS_RIGHT_MOUSE_DOWN
+    | NS_RIGHT_MOUSE_UP
+    | NS_MOUSE_MOVED
+    | NS_LEFT_MOUSE_DRAGGED
+    | NS_RIGHT_MOUSE_DRAGGED
+    | NS_MOUSE_ENTERED
+    | NS_MOUSE_EXITED
+    | NS_KEY_DOWN
+    | NS_KEY_UP
+    | NS_FLAGS_CHANGED
+    | NS_SCROLL_WHEEL
+    | NS_OTHER_MOUSE_DOWN
+    | NS_OTHER_MOUSE_UP
+    | NS_OTHER_MOUSE_DRAGGED;
+
+  // drain mask = 所有事件 - 用户输入事件
+  let drain_mask: u64 = NS_ANY_EVENT_MASK & !user_input_mask;
+
+  unsafe {
+    let app: id = msg_send![
+      objc::runtime::Class::get("NSApplication").unwrap(),
+      sharedApplication
+    ];
+    if app == nil {
+      return;
+    }
+
+    // NSDefaultRunLoopMode = @"kCFRunLoopDefaultMode"
+    let default_mode_str: id = NSString::alloc(nil).init_str("kCFRunLoopDefaultMode");
+
+    // [NSDate distantPast] — 确保不阻塞，只取立即可用的事件
+    let distant_past: id = msg_send![
+      objc::runtime::Class::get("NSDate").unwrap(),
+      distantPast
+    ];
+
+    for _ in 0..MAX_DRAIN_ITERATIONS {
+      let mut did_work = false;
+
+      // Phase 1: 排空非输入类 NSApp 事件
+      loop {
+        let event: id = msg_send![
+          app,
+          nextEventMatchingMask: drain_mask
+          untilDate: distant_past
+          inMode: default_mode_str
+          dequeue: true
+        ];
+        if event != nil {
+          let _: () = msg_send![app, sendEvent: event];
+          did_work = true;
+        } else {
+          break;
+        }
+      }
+
+      // Phase 2: 处理一个挂起的 CFRunLoop 源
+      //（GCD dispatch blocks、Mach-port 通知、定时器）
+      let result = CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.0, 1);
+      if result == K_CF_RUN_LOOP_RUN_HANDLED_SOURCE {
+        did_work = true;
+      }
+
+      if !did_work {
+        break;
+      }
+    }
+
+    // 释放创建的 NSString
+    if default_mode_str != nil {
+      let _: () = msg_send![default_mode_str, autorelease];
+    }
+  }
 }
 
 fn install_tray_menu_handlers(proxy: EventLoopProxy<Action>) {
