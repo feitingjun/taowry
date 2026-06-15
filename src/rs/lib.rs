@@ -38,10 +38,6 @@ struct MainState {
   event_loop: tao::event_loop::EventLoop<Action>,
 }
 
-/// 使闭包可 Send（值仅在主线程访问，安全）
-struct UnsafeSend<T>(T);
-unsafe impl<T> Send for UnsafeSend<T> {}
-
 // ===== 全局状态访问器（仅在主线程调用，安全）=====
 
 pub(crate) fn with_app<F, R>(f: F) -> Result<R>
@@ -89,10 +85,8 @@ fn start(env: Env, callback: JsFunction) -> Result<()> {
   QUIT_REQUESTED.store(false, Ordering::Relaxed);
 
   let noop = env.create_function_from_closure("noop", |_ctx| Ok(()))?;
-  let _guard = UnsafeSend(());
   let pump_tsfn: ThreadsafeFunction<(), ErrorStrategy::Fatal> = noop
     .create_threadsafe_function(0, move |_ctx: ThreadSafeCallContext<()>| {
-      let _g = &_guard;
       if QUIT_REQUESTED.load(Ordering::Relaxed) {
         return Ok::<Vec<napi::JsUndefined>, napi::Error>(vec![]);
       }
