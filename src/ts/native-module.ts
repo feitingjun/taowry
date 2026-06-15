@@ -97,7 +97,13 @@ export interface NativeModule {
   rpcInvoke: (label: string, method: string, data: string, callback: (result: string) => void) => void
   rpcResolve: (label: string, rpcId: number, data: string, error: string | null) => void
   rpcSend: (label: string, event: string, data: string) => void
-  protocolResponse: (label: string, requestId: string, statusCode: number, headers: string, body: string) => void
+  protocolResponse: (
+    label: string,
+    requestId: string,
+    statusCode: number,
+    headers: string,
+    body: string
+  ) => void
 
   // ===== 菜单 =====
   createMenu: (label: string, data: string) => void
@@ -132,28 +138,61 @@ export interface NativeModule {
   monitorFromPoint: (data: string) => string
 }
 
-function loadNative(): NativeModule {
-  const { platform, arch } = process
-  const candidates = [
-    `./index.${platform}-${arch}.node`,
-    `./taowry.${platform}-${arch}.node`,
-  ]
-  for (const name of candidates) {
-    try { return require(name) } catch { /* continue */ }
+// ===== Native 模块懒加载 =====
+
+let _native: NativeModule | undefined
+
+/**
+ * 初始化 native 模块
+ *
+ * 由 Application 构造函数自动调用，通常无需手动调用。
+ *
+ * @param binary - 直接传入已加载的原生模块，不传则自动查找
+ */
+export function initNative(binary?: any): void {
+  if (_native) return
+
+  // 用户直接传入已加载的模块
+  if (binary) {
+    _native = binary as NativeModule
+    return
   }
+
+  // 自动查找：项目根目录 → npm 包安装目录
   const path = require('path')
   const fs = require('fs')
-  const searchDirs = [__dirname, path.join(__dirname, '..'), path.join(__dirname, '..', '..'), process.cwd()]
-  for (const dir of searchDirs) {
-    for (const name of candidates) {
-      const p = path.join(dir, name)
-      if (fs.existsSync(p)) return require(p)
+  const filename = 'taowry.node'
+  const searchPaths: string[] = []
+
+  // 1. 项目根目录（process.cwd()）
+  searchPaths.push(path.join(process.cwd(), filename))
+
+  // 2. npm 包安装目录（__dirname 向上查找到 taowry 包根）
+  let dir = __dirname
+  searchPaths.push(path.join(dir, '..', '..', filename))
+
+  for (const p of searchPaths) {
+    if (fs.existsSync(p)) {
+      _native = require(p)
+      return
     }
   }
-  throw new Error(`[taowry] 找不到 native 模块 (.node 文件)，请运行 napi build --platform --release 编译`)
+
+  throw new Error(
+    `[taowry] 找不到 native 模块: ${filename}\n` +
+      `已搜索:\n  ${searchPaths.join('\n  ')}\n` +
+      `请运行 npm install（自动下载）或 napi build --platform（本地编译）\n` +
+      `或在 new Application({ binary: require('taowry.node') }) 中显式传入`
+  )
 }
 
-export const native = loadNative()
+/** native 模块代理，首次访问时自动初始化 */
+export const native: NativeModule = new Proxy({} as NativeModule, {
+  get(_, prop: string) {
+    if (!_native) initNative()
+    return (_native as any)[prop]
+  }
+})
 
 // ===== JSON 序列化辅助函数 =====
 
@@ -164,7 +203,7 @@ export function json(data: any): string {
 
 /** 反序列化 JSON 字符串，"null" 返回 null */
 export function parseOrNull<T = any>(str: string): T | null {
-  return str === 'null' ? null : JSON.parse(str) as T
+  return str === 'null' ? null : (JSON.parse(str) as T)
 }
 
 /** 反序列化 JSON 字符串（保证非 null） */

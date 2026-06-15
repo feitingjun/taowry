@@ -20,7 +20,7 @@
   },
   "scripts": {
     "start": "bun ./test/index.ts",
-    "build": "napi build --platform --release",
+    "build": "napi build --platform --release && mv index.darwin-arm64.node taowry.node",
     "build:all": "./build.sh"
   },
   "author": "",

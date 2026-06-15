@@ -9,7 +9,7 @@ import type {
 } from './types'
 import type BrowserWindow from './window'
 import { Menu } from './menu'
-import { native, json, parse, parseOrNull } from './native-module'
+import { native, json, parse, parseOrNull, initNative } from './native-module'
 
 /** 用于存储全局唯一的 Application 实例 */
 const CURRENT_APP_KEY = '__taowryApp'
@@ -47,6 +47,9 @@ export default class Application {
     if (options.protocol) {
       this._protocol = options.protocol
     }
+
+    // 初始化 native 模块（支持用户直接传入 binary）
+    initNative(options.binary)
 
     // 立即启动 Rust 事件循环
     native.start((raw: string) => {

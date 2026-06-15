@@ -91,8 +91,8 @@ export type ProtocolHandler = (request: Request) => Response | Promise<Response>
 export interface ApplicationOptions {
   /** views:// 自定义协议 handler（应用级，所有窗口共享） */
   protocol?: ProtocolHandler
-  /** Rust 二进制文件所在目录（不指定时自动查找） */
-  binaryDir?: string
+  /** 直接传入已加载的原生模块（不传则自动查找） */
+  binary?: any
 }
 
 /** 窗口尺寸约束 */
