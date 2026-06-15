@@ -304,22 +304,12 @@ export interface AppEvent {
   quit: void
 }
 
-/** 发送给 Rust 子进程的 IPC 消息格式 */
-export interface SendMessage {
-  id?: string
-  method: string
-  label: string
-  data?: any
-}
-
 /** 从 Rust 子进程接收的 IPC 消息格式 */
 export interface ReceiveMessage {
-  id?: string
-  type: 'response' | 'windowEvent' | 'appEvent' | 'trayEvent' | 'menuEvent'
+  type: 'windowEvent' | 'appEvent' | 'trayEvent' | 'menuEvent'
   method: string
   label: string
   data?: any
-  error?: string
 }
 
 /**RPC定义辅助类型 */

@@ -5,27 +5,23 @@
 
 #[cfg(target_os = "macos")]
 pub mod platform {
-  use cocoa::appkit::{NSApplication, NSApplicationActivationPolicy};
-  use cocoa::base::{id, nil};
-  use cocoa::foundation::NSString;
-  use objc::runtime::Class;
-  use objc::{msg_send, sel, sel_impl};
+  use objc2::msg_send;
+  use objc2::rc::Retained;
+  use objc2::runtime::AnyObject;
+  use objc2_foundation::NSString;
 
-  unsafe fn shared_app() -> id {
-    let cls = Class::get("NSApplication").unwrap();
-    msg_send![cls, sharedApplication]
+  unsafe fn shared_app() -> *mut AnyObject {
+    let cls = objc2::class!(NSApplication);
+    unsafe { msg_send![cls, sharedApplication] }
   }
 
   /// 设置 Dock 图标是否可见
   pub fn set_dock_visible(visible: bool) {
     unsafe {
       let app = shared_app();
-      let policy = if visible {
-        NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular
-      } else {
-        NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory
-      };
-      app.setActivationPolicy_(policy);
+      // NSApplicationActivationPolicyRegular = 0, NSApplicationActivationPolicyAccessory = 1
+      let policy: i64 = if visible { 0 } else { 1 };
+      let _: () = msg_send![app, setActivationPolicy: policy];
     }
   }
 
@@ -33,20 +29,14 @@ pub mod platform {
   pub fn set_dock_badge(text: &str) {
     unsafe {
       let app = shared_app();
-      let ns_string = if text.is_empty() {
-        nil
-      } else {
-        NSString::alloc(nil).init_str(text)
-      };
-      let dock_tile: id = msg_send![app, dockTile];
-      let _: () = msg_send![dock_tile, setBadgeLabel: ns_string];
-      if ns_string != nil {
-        let _: () = msg_send![ns_string, autorelease];
-      }
+      let ns_string: Retained<NSString> = NSString::from_str(text);
+      let badge: Option<&NSString> = if text.is_empty() { None } else { Some(&ns_string) };
+      let dock_tile: *mut AnyObject = msg_send![app, dockTile];
+      let _: () = msg_send![dock_tile, setBadgeLabel: badge];
     }
   }
 
-  /// 让 Dock 图标弹跳 (NSCriticalRequest)
+  /// 让 Dock 图标弹跳 (NSCriticalRequest = 0)
   pub fn bounce_dock() {
     unsafe {
       let app = shared_app();
@@ -58,7 +48,7 @@ pub mod platform {
   pub fn set_dock_menu(ns_menu: *mut std::ffi::c_void) {
     unsafe {
       let app = shared_app();
-      let _: () = msg_send![app, setDockMenu: ns_menu as id];
+      let _: () = msg_send![app, setDockMenu: ns_menu as *mut AnyObject];
     }
   }
 }

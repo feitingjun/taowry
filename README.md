@@ -46,10 +46,10 @@ npm install taowry
 ```typescript
 import { Application, BrowserWindow } from 'taowry'
 
-// 1. 创建应用实例
+// 1. 创建应用实例（构造时即启动 Rust 事件循环）
 const app = new Application()
 
-// 2. 创建窗口
+// 2. 创建窗口（同步）
 const win = new BrowserWindow('main', {
   url: 'https://example.com',
   width: 1024,
@@ -57,24 +57,24 @@ const win = new BrowserWindow('main', {
   title: 'My App',
 })
 
-// 3. 监听窗口创建
+// 3. 监听窗口事件
 win.onCreated((id) => {
   console.log('窗口已创建:', id)
 })
 
 // 4. 监听应用事件
 app.on('ready', () => console.log('应用已就绪'))
-app.on('quit', () => console.log('应用已退出'))
 
-// 5. 启动应用（阻塞直到退出）
-app.run()
+// 5. 窗口操作（同步调用，立即返回）
+win.setTitle('新标题')
+console.log(win.title())
 ```
 
 ---
 
 ## Application
 
-应用实例管理器，负责启动 Rust 子进程、管理窗口/菜单/托盘/显示器、处理 IPC 通信。
+应用实例管理器，构造时即启动 Rust 事件循环线程，无需调用 `run()`。
 
 ```typescript
 import { Application } from 'taowry'
@@ -84,12 +84,20 @@ const app = new Application()
 
 > 同一时间只能存在一个 Application 实例，重复创建会抛出错误。
 
-### run()
+### ready
 
-启动 Rust 子进程，返回退出码。在 `ready` 事件触发前，所有 IPC 消息会被排队等待。
+应用是否就绪（`ready` 事件触发后为 `true`）。
 
 ```typescript
-app.run(): Promise<number | null>
+app.ready: boolean
+```
+
+### whenReady()
+
+等待应用就绪，如果已就绪则立即 resolve。
+
+```typescript
+await app.whenReady(): Promise<void>
 ```
 
 ### quit()
@@ -97,7 +105,7 @@ app.run(): Promise<number | null>
 退出应用。
 
 ```typescript
-app.quit(): Promise<void>
+app.quit(): void
 ```
 
 ### webviewVersion()
@@ -105,7 +113,7 @@ app.quit(): Promise<void>
 获取 WebView 引擎版本号。
 
 ```typescript
-const version = await app.webviewVersion()
+const version = app.webviewVersion()
 // => "21624.2.5.11.4"
 ```
 
@@ -114,7 +122,7 @@ const version = await app.webviewVersion()
 获取所有窗口标签列表。
 
 ```typescript
-const labels = await app.windowLabels()
+const labels = app.windowLabels()
 // => ["main", "settings"]
 ```
 
@@ -166,12 +174,12 @@ await app.setDockMenu([
 
 | 方法 | 说明 | 返回值 |
 |------|------|--------|
-| `monitors()` | 获取所有显示器 | `Promise<Monitor[]>` |
-| `primaryMonitor()` | 获取主显示器 | `Promise<Monitor \| null>` |
-| `monitorFromPoint(x, y)` | 获取指定坐标处的显示器 | `Promise<Monitor \| null>` |
+| `monitors()` | 获取所有显示器 | `Monitor[]` |
+| `primaryMonitor()` | 获取主显示器 | `Monitor \| null` |
+| `monitorFromPoint(x, y)` | 获取指定坐标处的显示器 | `Monitor \| null` |
 
 ```typescript
-const monitors = await app.monitors()
+const monitors = app.monitors()
 console.log(monitors)
 // => [{ monitorId: 0, width: 1920, height: 1080, x: 0, y: 0, scaleFactor: 2, ... }]
 ```
@@ -313,7 +321,7 @@ const result = await win.rpc.requests.renderData({ items: ['a', 'b'] })
 console.log(result.count)
 
 // 向 WebView 发送消息（fire-and-forget）
-await win.rpc.messages.userAction({ action: 'refresh' })
+win.rpc.messages.userAction({ action: 'refresh' })
 ```
 
 #### WebView → Host（WebView 端调用 Host）
@@ -350,7 +358,7 @@ const user = await rpc.requests.getUserInfo({ userId: '123' })
 rpc.on('pageReady', (data) => console.log('页面就绪:', data.url))
 
 // 向 Host 发送消息
-await rpc.messages.pageReady({ url: location.href })
+rpc.messages.pageReady({ url: location.href })
 ```
 
 #### 动态注册/移除处理函数
@@ -360,6 +368,13 @@ win.handle('getUser', async (data) => {
   return { name: 'Alice' }
 })
 win.removeHandler('getUser')
+```
+
+#### 向 WebView 发送消息
+
+```typescript
+// 触发 WebView 端 __taowry._handleSend，由 webview 端 on() 监听器接收
+win.sendToWebview('update', { count: 42 })
 ```
 
 #### WebView 端 IPC（原始消息）
@@ -449,32 +464,32 @@ fetch('views://app/hello')          // host=app, path=/hello
 
 | 方法 | 说明 | 返回值 |
 |------|------|--------|
-| `close()` | 关闭窗口 | `Promise<void>` |
-| `requestRedraw()` | 请求重绘 | `Promise<void>` |
-| `setUrl(url)` | 设置 WebView URL | `Promise<void>` |
-| `loadUrlWithHeaders(url, headers)` | 带请求头加载 URL | `Promise<void>` |
-| `url()` | 获取当前 URL | `Promise<string>` |
-| `evaluateScript(script)` | 执行 JS（无返回值） | `Promise<void>` |
+| `close()` | 关闭窗口 | `void` |
+| `requestRedraw()` | 请求重绘 | `void` |
+| `setUrl(url)` | 设置 WebView URL | `void` |
+| `loadUrlWithHeaders(url, headers)` | 带请求头加载 URL | `void` |
+| `url()` | 获取当前 URL | `string` |
+| `evaluateScript(script)` | 执行 JS（无返回值） | `void` |
 | `evaluateScriptReturnResult(script)` | 执行 JS 并返回结果 | `Promise<string>` |
-| `print()` | 打印页面 | `Promise<void>` |
-| `openDevtools()` | 打开开发者工具 | `Promise<void>` |
-| `closeDevtools()` | 关闭开发者工具 | `Promise<void>` |
-| `isDevtoolsOpen()` | 开发者工具是否打开 | `Promise<boolean>` |
-| `zoom(scale)` | 设置缩放比例 | `Promise<void>` |
-| `scaleFactor()` | 获取缩放因子 | `Promise<number>` |
-| `clearAllBrowsingData()` | 清除浏览数据 | `Promise<void>` |
-| `setBackgroundColor(color)` | 设置 WebView 背景色 `[r,g,b,a]` | `Promise<void>` |
-| `setWindowBackgroundColor(color)` | 设置窗口背景色 `[r,g,b,a]` 或 `null` | `Promise<void>` |
+| `print()` | 打印页面 | `void` |
+| `openDevtools()` | 打开开发者工具 | `void` |
+| `closeDevtools()` | 关闭开发者工具 | `void` |
+| `isDevtoolsOpen()` | 开发者工具是否打开 | `boolean` |
+| `zoom(scale)` | 设置缩放比例 | `void` |
+| `scaleFactor()` | 获取缩放因子 | `number` |
+| `clearAllBrowsingData()` | 清除浏览数据 | `void` |
+| `setBackgroundColor(color)` | 设置 WebView 背景色 `[r,g,b,a]` | `void` |
+| `setWindowBackgroundColor(color)` | 设置窗口背景色 `[r,g,b,a]` 或 `null` | `void` |
 
 ```typescript
 // 执行 JS
-await win.evaluateScript(`document.title = 'Hello'`)
+win.evaluateScript(`document.title = 'Hello'`)
 
 // 执行 JS 并获取结果
 const title = await win.evaluateScriptReturnResult(`document.title`)
 
 // 带请求头加载
-await win.loadUrlWithHeaders('https://api.example.com', {
+win.loadUrlWithHeaders('https://api.example.com', {
   Authorization: 'Bearer token'
 })
 ```
@@ -483,43 +498,43 @@ await win.loadUrlWithHeaders('https://api.example.com', {
 
 | 方法 | 说明 | 返回值 |
 |------|------|--------|
-| `innerPosition()` | 客户区域位置（不含边框/标题栏） | `Promise<Position>` |
-| `outerPosition()` | 窗口位置 | `Promise<Position>` |
-| `setPosition(x, y)` | 设置窗口位置 | `Promise<void>` |
-| `innerSize()` | 客户区域尺寸 | `Promise<Size>` |
-| `setSize(width, height)` | 设置窗口尺寸 | `Promise<Size>` |
-| `outerSize()` | 整个窗口物理尺寸 | `Promise<Size>` |
-| `setMinSize(width, height)` | 设置最小尺寸 | `Promise<void>` |
-| `setMaxSize(width, height)` | 设置最大尺寸 | `Promise<void>` |
-| `setInnerSizeConstraints(c)` | 设置尺寸约束 | `Promise<void>` |
+| `position()` | 客户区域位置（不含边框/标题栏） | `Position` |
+| `outerPosition()` | 窗口位置 | `Position` |
+| `setPosition(x, y)` | 设置窗口位置 | `void` |
+| `size()` | 客户区域尺寸 | `Size` |
+| `setSize(width, height)` | 设置窗口尺寸 | `Size` |
+| `outerSize()` | 整个窗口物理尺寸 | `Size` |
+| `setMinSize(width, height)` | 设置最小尺寸 | `void` |
+| `setMaxSize(width, height)` | 设置最大尺寸 | `void` |
+| `setInnerSizeConstraints(c)` | 设置尺寸约束 | `void` |
 
 ```typescript
-await win.setSize(1280, 720)
-await win.setPosition(100, 100)
-await win.setMinSize(400, 300)
-await win.setMaxSize(1920, 1080)
+win.setSize(1280, 720)
+win.setPosition(100, 100)
+win.setMinSize(400, 300)
+win.setMaxSize(1920, 1080)
 ```
 
 ### 窗口属性
 
 | 方法 | 说明 | 返回值 |
 |------|------|--------|
-| `setTitle(title)` / `title()` | 设置/获取标题 | `Promise<void>` / `Promise<string>` |
-| `setVisible(visible)` / `isVisible()` | 设置/获取可见性 | `Promise<void>` / `Promise<boolean>` |
-| `setResizable(bool)` / `isResizable()` | 设置/获取可调整大小 | |
-| `setMinimizable(bool)` / `isMinimizable()` | 设置/获取可最小化 | |
-| `setMaximizable(bool)` / `isMaximizable()` | 设置/获取可最大化 | |
-| `setClosable(bool)` / `isClosable()` | 设置/获取可关闭 | |
-| `setEnabledButtons(buttons)` / `enabledButtons()` | 设置/获取控制按钮 | |
-| `minimized()` / `unminimized()` / `isMinimized()` | 最小化操作 | |
-| `maximized()` / `unmaximized()` / `isMaximized()` | 最大化操作 | |
+| `setTitle(title)` / `title()` | 设置/获取标题 | `void` / `string` |
+| `setVisible(visible)` / `isVisible()` | 设置/获取可见性 | `void` / `boolean` |
+| `setResizable(bool)` / `isResizable()` | 设置/获取可调整大小 | `void` / `boolean` |
+| `setMinimizable(bool)` / `isMinimizable()` | 设置/获取可最小化 | `void` / `boolean` |
+| `setMaximizable(bool)` / `isMaximizable()` | 设置/获取可最大化 | `void` / `boolean` |
+| `setClosable(bool)` / `isClosable()` | 设置/获取可关闭 | `void` / `boolean` |
+| `setEnabledButtons(buttons)` / `enabledButtons()` | 设置/获取控制按钮 | `void` / `WindowButton[]` |
+| `minimized()` / `unminimized()` / `isMinimized()` | 最小化操作 | `void` / `boolean` |
+| `maximized()` / `unmaximized()` / `isMaximized()` | 最大化操作 | `void` / `boolean` |
 
 ```typescript
-await win.setTitle('新标题')
-const title = await win.title()
-await win.setEnabledButtons(['close', 'minimize'])
-await win.minimized()
-await win.unminimized()
+win.setTitle('新标题')
+const title = win.title()
+win.setEnabledButtons(['close', 'minimize'])
+win.minimized()
+win.unminimized()
 ```
 
 ### 菜单
@@ -538,7 +553,7 @@ await win.setMenu([
 ])
 
 // 设为应用全局菜单（仅 macOS）
-await win.setApplicationMenu()
+win.setApplicationMenu()
 ```
 
 详见 [Menu 菜单配置](#menu-菜单配置)。
@@ -574,17 +589,17 @@ await win.setApplicationMenu()
 
 ```typescript
 // 进度条
-await win.setProgressBar({ state: 'normal', progress: 50 })
-await win.setProgressBar(null) // 移除
+win.setProgressBar({ state: 'normal', progress: 50 })
+win.setProgressBar(null) // 移除
 
 // 请求用户注意
-await win.requestUserAttention('critical') // 闪烁直到获取焦点
-await win.requestUserAttention('informational') // 闪烁一次
+win.requestUserAttention('critical') // 闪烁直到获取焦点
+win.requestUserAttention('informational') // 闪烁一次
 
 // 主题
-await win.setTheme('dark')
-await win.setTheme('default') // 跟随系统
-const theme = await win.theme()
+win.setTheme('dark')
+win.setTheme('default') // 跟随系统
+const theme = win.theme()
 ```
 
 ### 光标
@@ -633,12 +648,12 @@ tray.once('doubleClick', (data) => {
 })
 
 // 动态操作
-await tray.setIcon('/path/to/new-icon.png')
-await tray.setTooltip('新提示')
-await tray.setTitle('新标题')    // macOS
-await tray.setVisible(false)
-const rect = await tray.rect()   // 获取图标区域
-await tray.remove()              // 移除托盘
+tray.setIcon('/path/to/new-icon.png')
+tray.setTooltip('新提示')
+tray.setTitle('新标题')    // macOS
+tray.setVisible(false)
+const rect = tray.rect()   // 获取图标区域
+tray.remove()              // 移除托盘
 
 // 动态设置菜单
 await tray.setMenu([
@@ -721,13 +736,15 @@ await app.setApplicationMenu([
 通过标签名获取已创建的窗口实例。
 
 ```typescript
-import { getWindow } from 'taowry'
+import { getWindow, Window } from 'taowry'
 
 const win = getWindow('main')
 if (win) {
-  await win.focus()
+  win.focus()
 }
 ```
+
+> `Window` 是 `BrowserWindow` 的别名，可以直接使用。
 
 ---
 
@@ -927,18 +944,22 @@ interface MenuItemOptions {
 
 ## 注意事项
 
-1. **RPC 通信架构**：RPC 协议由 Rust 层解析和路由（基于 wry 原生 `with_ipc_handler` + `evaluate_script`），Node.js 侧为薄消费者。Host→WebView 请求采用延迟响应模式——Rust 分配请求 ID 并追踪映射，WebView 响应后才将结果发回 Node.js。非 RPC 的 `window.ipc.postMessage()` 仍通过 `ipcMessage` 事件透传。
+1. **架构**：基于 napi-rs 构建的原生模块，TS 直接同步调用 Rust napi 函数，无中间层。Application 构造时启动 Rust 事件循环线程，窗口/菜单/托盘等操作均为同步调用。
 
-2. **菜单快捷键**：快捷键格式为 `Modifier+Key`，其中 Key 必须是标准键名（如 `N`、`S`、`=`、`-`），不支持 `Plus` 等别名。
+2. **RPC 通信架构**：RPC 协议由 Rust 层解析和路由（基于 wry 原生 `with_ipc_handler` + `evaluate_script`），Node.js 侧为薄消费者。Host→WebView 请求采用延迟响应模式——Rust 分配请求 ID 并追踪映射，WebView 响应后才将结果发回 Node.js。非 RPC 的 `window.ipc.postMessage()` 仍通过 `ipcMessage` 事件透传。
 
-3. **evaluateScriptReturnResult**：在 `file://` URL 下 wry 存在已知问题，建议使用 `http://` URL 加载页面，或使用 `evaluateScript` 配合 RPC 通信获取返回值。
+3. **菜单快捷键**：快捷键格式为 `Modifier+Key`，其中 Key 必须是标准键名（如 `N`、`S`、`=`、`-`），不支持 `Plus` 等别名。
 
-4. **应用菜单**：`setApplicationMenu` 仅在 macOS 上有效。Windows/Linux 请使用 `setWindowMenu` 或 `win.setMenu()` 设置窗口菜单。
+4. **evaluateScriptReturnResult**：在 `file://` URL 下 wry 存在已知问题，建议使用 `http://` URL 加载页面，或使用 `evaluateScript` 配合 RPC 通信获取返回值。
 
-5. **透明窗口**：创建窗口时设置 `transparent: true`，WebView 和窗口背景色会自动设为透明。
+5. **应用菜单**：`setApplicationMenu` 仅在 macOS 上有效。Windows/Linux 请使用 `setWindowMenu` 或 `win.setMenu()` 设置窗口菜单。
 
-6. **无边框窗口拖动**：wry 0.55+ 原生支持 CSS `-webkit-app-region: drag` 拖动窗口，`-webkit-app-region: no-drag` 排除交互区域（按钮、输入框等），无需额外代码。
+6. **透明窗口**：创建窗口时设置 `transparent: true`，WebView 和窗口背景色会自动设为透明。
 
-7. **本地开发**：运行 `bun run build` 编译 Rust 二进制文件（build.sh 会自动同步到 `src/ts/` 和 `binary/`），然后通过 `bun start` 运行测试。修改 Rust 代码后必须重新编译。
+7. **无边框窗口拖动**：wry 0.55+ 原生支持 CSS `-webkit-app-region: drag` 拖动窗口，`-webkit-app-region: no-drag` 排除交互区域（按钮、输入框等），无需额外代码。
 
-8. **views:// 协议**：WebView 端所有 `views://` 请求通过 Rust → Node IPC 中转处理。请求体和响应体使用 base64 编码传输，对于常规 HTML/JS/CSS 内容（KB 到几百 KB）无性能问题，大型资源（MB 级别）可能有延迟。
+8. **本地开发**：运行 `bun run build` 编译 Rust 原生模块（build.sh 会自动同步到 `src/ts/` 和 `binary/`），然后通过 `bun start` 运行测试。修改 Rust 代码后必须重新编译。
+
+9. **views:// 协议**：WebView 端所有 `views://` 请求通过 Rust → Node IPC 中转处理。请求体和响应体使用 base64 编码传输，对于常规 HTML/JS/CSS 内容（KB 到几百 KB）无性能问题，大型资源（MB 级别）可能有延迟。
+
+10. **macOS 平台依赖**：macOS 平台特定功能（Dock、事件排空）使用 `objc2` + `objc2-foundation` crate 实现原生 Objective-C 互操作，已替代旧的 `cocoa`/`objc` crate。

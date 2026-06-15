@@ -1,6 +1,7 @@
 import type { Rect, TrayIconEvent, TrayIconOptions, MenuOptions } from './types'
 import { getCurrentApplication } from './app'
 import { Menu } from './menu'
+import { native, json, parseOrNull } from './native-module'
 
 /**
  * Tray - 系统托盘图标
@@ -16,23 +17,15 @@ export class Tray {
     this.label = label
 
     if (options.menu) {
-      // 自动创建内部菜单
       const menuLabel = `${label}:auto-menu`
       this._autoMenu = new Menu(menuLabel, options.menu)
-      this.created = this._autoMenu.created.then(() => {
-        return app()._sendIoMessage({
-          label,
-          method: 'create_tray',
-          data: { ...options, menu: menuLabel }
-        })
-      })
+      // Menu creation is synchronous now, so create tray immediately
+      native.createTray(label, json({ ...options, menu: menuLabel }))
+      this.created = Promise.resolve()
     } else {
       const { menu, ...restOptions } = options
-      this.created = app()._sendIoMessage({
-        label,
-        method: 'create_tray',
-        data: restOptions
-      })
+      native.createTray(label, json(restOptions))
+      this.created = Promise.resolve()
     }
   }
 
@@ -46,45 +39,46 @@ export class Tray {
   }
 
   /** 设置托盘图标 */
-  setIcon(icon: string | null): Promise<void> {
-    return app()._sendIoMessage({ label: this.label, method: 'set_tray_icon', data: icon })
+  setIcon(icon: string | null): void {
+    native.setTrayIcon(this.label, json(icon))
   }
 
   /** 设置托盘菜单 */
   async setMenu(menu: MenuOptions | null): Promise<void> {
     if (!menu) {
-      return app()._sendIoMessage({ label: this.label, method: 'set_tray_menu', data: null })
+      native.setTrayMenu(this.label, json(null))
+      return
     }
     const menuLabel = `${this.label}:auto-menu-${++this._menuCounter}`
     const autoMenu = new Menu(menuLabel, menu)
     this._autoMenu = autoMenu
     await autoMenu.created
-    return app()._sendIoMessage({ label: this.label, method: 'set_tray_menu', data: menuLabel })
+    native.setTrayMenu(this.label, json(menuLabel))
   }
 
   /** 设置鼠标悬停提示 */
-  setTooltip(tooltip: string | null): Promise<void> {
-    return app()._sendIoMessage({ label: this.label, method: 'set_tray_tooltip', data: tooltip })
+  setTooltip(tooltip: string | null): void {
+    native.setTrayTooltip(this.label, json(tooltip))
   }
 
   /** 设置托盘标题 (仅 macOS) */
-  setTitle(title: string | null): Promise<void> {
-    return app()._sendIoMessage({ label: this.label, method: 'set_tray_title', data: title })
+  setTitle(title: string | null): void {
+    native.setTrayTitle(this.label, json(title))
   }
 
   /** 设置托盘可见性 */
-  setVisible(visible: boolean): Promise<void> {
-    return app()._sendIoMessage({ label: this.label, method: 'set_tray_visible', data: visible })
+  setVisible(visible: boolean): void {
+    native.setTrayVisible(this.label, json(visible))
   }
 
   /** 获取托盘图标区域信息 */
-  rect(): Promise<Rect | null> {
-    return app()._sendIoMessage({ label: this.label, method: 'tray_rect' })
+  rect(): Rect | null {
+    return parseOrNull(native.trayRect(this.label))
   }
 
   /** 移除托盘图标 */
-  remove(): Promise<void> {
-    return app()._sendIoMessage({ label: this.label, method: 'remove_tray' })
+  remove(): void {
+    native.removeTray(this.label)
   }
 }
 

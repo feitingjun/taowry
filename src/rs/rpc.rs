@@ -50,17 +50,23 @@ pub fn parse_ipc_message(body: &str) -> Option<RpcMessage> {
   })
 }
 
+/// RPC 回调类型
+pub type RpcCallback = Box<dyn FnOnce(Result<serde_json::Value, String>) + Send>;
+
 /// 每个窗口独立的 RPC 状态。
 ///
 /// 仅追踪 Host→WebView 方向的请求（`pending_host_requests`）：
-/// Rust 为该方向分配 rpc_id，并在 WebView 响应前持有对应的 `_ioc:` 消息 ID，
-/// 以便响应到达时能将结果路由回 Node.js 的正确回调。
-///
-/// WebView→Host 方向的请求 ID 由桥接脚本生成，Rust 仅透传，无需在此追踪。
+/// Rust 为该方向分配 rpc_id，并在 WebView 响应前持有对应的回调。
 pub struct RpcState {
   host_request_counter: u64,
-  /// rpc_id → node_ioc_id 映射（Host→WebView 请求追踪）
-  pending_host_requests: HashMap<u64, String>,
+  /// rpc_id → 回调映射（Host→WebView 请求追踪）
+  pending_host_requests: HashMap<u64, RpcCallback>,
+}
+
+impl Default for RpcState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RpcState {
@@ -71,18 +77,18 @@ impl RpcState {
     }
   }
 
-  /// 为 Host→WebView 请求分配新的 rpc_id，并记录对应的 `_ioc:` 消息 ID。
+  /// 为 Host→WebView 请求分配新的 rpc_id，并记录回调。
   /// 返回新分配的 rpc_id。
-  pub fn assign_host_request_id(&mut self, ioc_id: String) -> u64 {
+  pub fn assign_host_request_id<F>(&mut self, callback: F) -> u64
+  where F: FnOnce(Result<serde_json::Value, String>) + Send + 'static {
     self.host_request_counter += 1;
     let rpc_id = self.host_request_counter;
-    self.pending_host_requests.insert(rpc_id, ioc_id);
+    self.pending_host_requests.insert(rpc_id, Box::new(callback));
     rpc_id
   }
 
-  /// WebView 响应后，移除映射并返回对应的 `_ioc:` 消息 ID，
-  /// 用于将结果发送回 Node.js。
-  pub fn resolve_host_request(&mut self, rpc_id: u64) -> Option<String> {
+  /// WebView 响应后，移除映射并返回回调。
+  pub fn resolve_host_request(&mut self, rpc_id: u64) -> Option<RpcCallback> {
     self.pending_host_requests.remove(&rpc_id)
   }
 }
@@ -136,21 +142,28 @@ mod tests {
 
   #[test]
   fn test_rpc_state_host_requests() {
-    let mut state = RpcState::new();
-    let id1 = state.assign_host_request_id("ioc-abc".to_string());
-    let id2 = state.assign_host_request_id("ioc-def".to_string());
+    use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+    let state = RpcState::new();
+    // 使用 RefCell 在单线程测试中允许可变借用
+    let mut state = state;
+    let called1 = Arc::new(AtomicBool::new(false));
+    let called2 = Arc::new(AtomicBool::new(false));
+    let c1 = called1.clone();
+    let c2 = called2.clone();
+    let id1 = state.assign_host_request_id(move |_| { c1.store(true, Ordering::Relaxed); });
+    let id2 = state.assign_host_request_id(move |_| { c2.store(true, Ordering::Relaxed); });
     assert_eq!(id1, 1);
     assert_eq!(id2, 2);
 
-    assert_eq!(
-      state.resolve_host_request(id1),
-      Some("ioc-abc".to_string())
-    );
+    let cb = state.resolve_host_request(id1);
+    assert!(cb.is_some());
+    cb.unwrap()(Ok(serde_json::Value::Null));
+    assert!(called1.load(Ordering::Relaxed));
     // 第二次 resolve 同一 ID 应返回 None
-    assert_eq!(state.resolve_host_request(id1), None);
-    assert_eq!(
-      state.resolve_host_request(id2),
-      Some("ioc-def".to_string())
-    );
+    assert!(state.resolve_host_request(id1).is_none());
+    let cb2 = state.resolve_host_request(id2);
+    assert!(cb2.is_some());
+    cb2.unwrap()(Ok(serde_json::Value::Null));
+    assert!(called2.load(Ordering::Relaxed));
   }
 }

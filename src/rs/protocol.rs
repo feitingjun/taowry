@@ -14,6 +14,12 @@ pub struct ProtocolState {
   pending: HashMap<String, RequestAsyncResponder>,
 }
 
+impl Default for ProtocolState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProtocolState {
   pub fn new() -> Self {
     Self {

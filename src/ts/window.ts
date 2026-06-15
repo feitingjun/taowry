@@ -19,15 +19,16 @@ import type {
 } from './types'
 import { getCurrentApplication } from './app'
 import { Menu } from './menu'
+import { native, json, parse } from './native-module'
 
 /** 注入到 WebView 的 RPC 桥接脚本 */
 const RPC_BRIDGE_SCRIPT = `
 (function() {
   if (window.__taowry) return;
   var counter = 0;
-  var callbacks = {};       // WebView→Host 请求的 pending callbacks
-  var rpcHandlers = {};     // Host→WebView 的 request handlers
-  var messageHandlers = {}; // Host→WebView 的消息监听
+  var callbacks = {};
+  var rpcHandlers = {};
+  var messageHandlers = {};
 
   window.__taowry = {
     defineRPC: function(config) {
@@ -83,8 +84,6 @@ const RPC_BRIDGE_SCRIPT = `
         }
       };
     },
-
-    // 内部：resolve WebView→Host 请求的回调
     _resolve: function(id, data, error) {
       var cb = callbacks[id];
       if (!cb) return;
@@ -92,8 +91,6 @@ const RPC_BRIDGE_SCRIPT = `
       if (error) cb.reject(new Error(error));
       else cb.resolve(data);
     },
-
-    // 内部：处理 Host→WebView 的 request
     _handleInvoke: function(payload) {
       var id = payload.id;
       var method = payload.method;
@@ -118,8 +115,6 @@ const RPC_BRIDGE_SCRIPT = `
         window.ipc.postMessage(JSON.stringify({ type: "res", id: id, error: err.message || String(err) }));
       }
     },
-
-    // 内部：处理 Host→WebView 的消息（setTimeout 保留 debugger 安全修复）
     _handleSend: function(event, data) {
       setTimeout(function() {
         var mh = messageHandlers[event] || [];
@@ -132,15 +127,29 @@ const RPC_BRIDGE_SCRIPT = `
 
 type RpcHandler = (data: any) => any | Promise<any>
 
+/**
+ * BrowserWindow - 浏览器窗口
+ *
+ * 包含 tao 窗口和 wry WebView 的绑定，提供窗口管理、WebView 操作、RPC 通信等功能。
+ * 必须在 Application 创建之后才能实例化。
+ *
+ * @template T - RPC 接口类型定义
+ */
 export default class BrowserWindow<T extends RPCInterface = any> {
+  /** 窗口唯一标识符 */
   readonly label: string
-  private _id?: WindowId
-  private _created: Promise<WindowId>
+  /** 窗口原生 ID */
+  readonly id: WindowId
   private _autoMenu?: Menu
   private _rpc?: HostRPCInstance<T>
   private rpcHandlers: Map<string, RpcHandler> = new Map()
   private _rpcMessageListeners: Record<string, Function[]> = {}
 
+  /**
+   * 创建浏览器窗口
+   * @param label - 窗口唯一标识符，不可重复
+   * @param props - 窗口配置项 @see BrowserWindowAttributes
+   */
   constructor(label: string, props: BrowserWindowAttributes<T> = {}) {
     const app = getCurrentApplication()
     if (!app) {
@@ -173,16 +182,12 @@ export default class BrowserWindow<T extends RPCInterface = any> {
       const listeners = (this._rpcMessageListeners[msg.event] || []).slice()
       queueMicrotask(() => {
         for (const cb of listeners) {
-          try {
-            cb(msg.data)
-          } catch (e) {
-            console.error(`RPC message listener error [${msg.event}]:`, e)
-          }
+          try { cb(msg.data) } catch (e) { console.error(`RPC message listener error [${msg.event}]:`, e) }
         }
       })
     })
 
-    // 处理 props.rpc：创建 RPC 实例
+    // 处理 props.rpc
     if (props.rpc) {
       this._rpc = this.createRPC(props.rpc)
     }
@@ -192,124 +197,97 @@ export default class BrowserWindow<T extends RPCInterface = any> {
     delete createProps.rpc
     delete createProps.menu
 
-    // 处理 props.menu：创建菜单并关联到窗口
+    // 处理 props.menu
     const menuConfig = props.menu
     if (menuConfig) {
       const menuLabel = `${label}:auto-menu`
       this._autoMenu = new Menu(menuLabel, menuConfig)
     }
 
-    this._created = this.create(createProps)
+    // 同步创建窗口
+    this.id = native.createWindow(label, json(createProps))
+    this.app._emit(this.label, 'created', this.id)
 
-    // 菜单创建完成后自动关联到窗口
+    // 自动关联菜单
     if (this._autoMenu) {
-      const autoMenu = this._autoMenu
-      this._created = this._created.then(async id => {
-        await autoMenu.created
-        await this.setMenu(autoMenu.label)
-        return id
+      this._autoMenu.created.then(() => {
+        native.setWindowMenu(label, this._autoMenu!.label)
       })
     }
   }
 
-  /** 获取窗口唯一 ID (由 Rust 端分配) */
-  get id(): WindowId | undefined {
-    return this._id
-  }
-
-  /** 窗口创建完成的 Promise */
-  get created(): Promise<WindowId> {
-    return this._created
-  }
-
-  /** 获取窗口的 RPC 实例（由 props.rpc 创建） */
+  /** RPC 通信实例，用于 Host↔WebView 双向通信 */
   get rpc(): HostRPCInstance<T> | undefined {
     return this._rpc
   }
 
   // ===== 事件 =====
 
-  on<T extends keyof WindowEvent>(event: T, callback: (data: WindowEvent[T]) => void) {
+  /** 监听窗口事件，返回取消监听的函数 */
+  on<E extends keyof WindowEvent>(event: E, callback: (data: WindowEvent[E]) => void) {
     return this.app.on(this.label, event, callback as any)
   }
 
-  once<T extends keyof WindowEvent>(event: T, callback: (data: WindowEvent[T]) => void) {
+  /** 监听窗口事件（仅触发一次），返回取消监听的函数 */
+  once<E extends keyof WindowEvent>(event: E, callback: (data: WindowEvent[E]) => void) {
     return this.app.once(this.label, event, callback as any)
   }
 
-  onCreated(callback: (id: WindowId) => void) {
-    return this.on('created', callback)
-  }
-
-  onMove(callback: (data: Position) => void) {
-    return this.on('move', callback)
-  }
-  onClose(callback: () => void) {
-    return this.on('close', callback)
-  }
-  onDestroy(callback: () => void) {
-    return this.on('destroy', callback)
-  }
-  onBlur(callback: () => void) {
-    return this.on('blur', callback)
-  }
-  onFocus(callback: () => void) {
-    return this.on('focus', callback)
-  }
-  onCursorMove(callback: (data: Position) => void) {
-    return this.on('cursorMove', callback)
-  }
-  onCursorEnter(callback: () => void) {
-    return this.on('cursorEnter', callback)
-  }
-  onCursorOut(callback: () => void) {
-    return this.on('cursorOut', callback)
-  }
-  onTheme(callback: (data: Theme) => void) {
-    return this.on('theme', callback)
-  }
-  onResize(callback: (data: Size) => void) {
-    return this.on('resize', callback)
-  }
+  /** 监听窗口创建完成 */
+  onCreated(callback: (id: WindowId) => void) { return this.on('created', callback) }
+  /** 监听窗口移动 */
+  onMove(callback: (data: Position) => void) { return this.on('move', callback) }
+  /** 监听窗口关闭 */
+  onClose(callback: () => void) { return this.on('close', callback) }
+  /** 监听窗口销毁 */
+  onDestroy(callback: () => void) { return this.on('destroy', callback) }
+  /** 监听窗口失去焦点 */
+  onBlur(callback: () => void) { return this.on('blur', callback) }
+  /** 监听窗口获得焦点 */
+  onFocus(callback: () => void) { return this.on('focus', callback) }
+  /** 监听鼠标在窗口上移动 */
+  onCursorMove(callback: (data: Position) => void) { return this.on('cursorMove', callback) }
+  /** 监听鼠标进入窗口 */
+  onCursorEnter(callback: () => void) { return this.on('cursorEnter', callback) }
+  /** 监听鼠标离开窗口 */
+  onCursorOut(callback: () => void) { return this.on('cursorOut', callback) }
+  /** 监听主题变更 */
+  onTheme(callback: (data: Theme) => void) { return this.on('theme', callback) }
+  /** 监听窗口大小变更 */
+  onResize(callback: (data: Size) => void) { return this.on('resize', callback) }
 
   // ===== 菜单 =====
 
-  /** 设置此窗口的菜单栏 */
+  /** 设置窗口菜单栏 */
   async setMenu(menu: MenuOptions | string): Promise<void> {
     if (typeof menu === 'string') {
-      return this.send('set_window_menu', { window: this.label, menu })
+      native.setWindowMenu(this.label, menu)
+      return
     }
     const menuLabel = `${this.label}:set-menu`
     const autoMenu = new Menu(menuLabel, menu)
     await autoMenu.created
-    return this.send('set_window_menu', { window: this.label, menu: menuLabel })
+    native.setWindowMenu(this.label, menuLabel)
   }
 
-  /** 将此窗口的菜单设为应用全局菜单 (仅 macOS) */
-  setApplicationMenu(): Promise<void> {
+  /** 将此窗口菜单设为应用全局菜单（仅 macOS 有效） */
+  setApplicationMenu(): void {
     if (this._autoMenu) {
-      return this.app.setApplicationMenu(this._autoMenu.items)
+      native.setApplicationMenu(this._autoMenu.label)
+    } else {
+      native.setApplicationMenu(`${this.label}:auto-menu`)
     }
-    return this.send('set_application_menu', { menu: `${this.label}:auto-menu` })
   }
 
-  // ===== RPC: createRPC =====
+  // ===== RPC =====
 
-  /**
-   * 创建 Host 端 RPC 实例（由 props.rpc 触发）
-   * 支持 Host ↔ WebView 双向通信，包含 request-response 和 messages (fire-and-forget) 两种模式
-   */
   private createRPC(config: BrowserWindowAttributes<T>['rpc']): HostRPCInstance<T> {
     if (!config) throw new Error('RPC config is required')
-
-    // 注册当前侧的 request handlers（对端调用我）
     if (config.requests) {
       for (const [method, handler] of Object.entries(config.requests)) {
         if (handler) this.rpcHandlers.set(method, handler as RpcHandler)
       }
     }
-
-    // 注册 messages 监听
     if (config.messages) {
       for (const [event, handler] of Object.entries(config.messages)) {
         if (handler) {
@@ -318,23 +296,17 @@ export default class BrowserWindow<T extends RPCInterface = any> {
         }
       }
     }
-
-    // 构建 requests 代理（调用 WebView 端方法，通过 Rust rpcInvoke 延迟响应）
     const self = this
     const requestsProxy = new Proxy({} as any, {
       get(_, method: string) {
         return (data: any) => self.app._rpcInvoke(self.label, method, data)
       }
     })
-
-    // 构建 messages 代理（向 WebView 端发送消息，通过 Rust rpcSend）
     const messagesProxy = new Proxy({} as any, {
       get(_, event: string) {
         return (data: any) => self.app._rpcSend(self.label, event, data)
       }
     })
-
-    // 返回 RPC 实例
     return {
       requests: requestsProxy,
       messages: messagesProxy,
@@ -358,294 +330,239 @@ export default class BrowserWindow<T extends RPCInterface = any> {
     } as HostRPCInstance<T>
   }
 
-  // ===== RPC: WebView → Node =====
-
-  /**
-   * 注册 RPC 处理函数
-   * WebView 端通过 rpc.requests.method(data) 调用
-   * @param method 方法名
-   * @param handler 处理函数，返回值会传回 WebView
-   */
-  handle(method: string, handler: RpcHandler) {
-    this.rpcHandlers.set(method, handler)
-  }
-
-  /** 移除 RPC 处理函数 */
-  removeHandler(method: string) {
-    this.rpcHandlers.delete(method)
-  }
-
-  // ===== RPC: Node → WebView =====
+  /** 动态注册 RPC 处理函数（WebView→Host 方向） */
+  handle(method: string, handler: RpcHandler) { this.rpcHandlers.set(method, handler) }
+  /** 移除已注册的 RPC 处理函数 */
+  removeHandler(method: string) { this.rpcHandlers.delete(method) }
 
   /**
    * 向 WebView 发送消息（fire-and-forget）
-   * WebView 端通过 rpc.on(event, callback) 监听
+   * 触发 WebView 端 `__taowry.on(event, callback)` 监听器
    */
   sendToWebview(event: string, data?: any): void {
-    const payload = JSON.stringify(data === undefined ? null : data)
-    this.evaluateScript(
-      `window.__taowry && window.__taowry._handleSend(${JSON.stringify(event)}, ${payload})`
+    const payload = json(data)
+    native.windowEvaluateScript(this.label,
+      `window.__taowry && window.__taowry._handleSend(${json(event)}, ${payload})`
     )
   }
 
   // ===== WebView 操作 =====
 
-  close(): Promise<void> {
-    return this.send('close')
+  /** 关闭窗口 */
+  close(): void { native.windowClose(this.label) }
+  /** 请求重绘 */
+  requestRedraw(): void { native.windowRequestRedraw(this.label) }
+  /** 设置 WebView URL */
+  setUrl(url: string): void { native.windowSetUrl(this.label, url) }
+  /** 带请求头加载 URL */
+  loadUrlWithHeaders(url: string, headers: Record<string, string>): void {
+    native.windowLoadUrlWithHeaders(this.label, json({ url, headers }))
   }
-  requestRedraw(): Promise<void> {
-    return this.send('request_redraw')
-  }
-  setUrl(url: string): Promise<void> {
-    return this.send('set_url', url)
-  }
-  loadUrlWithHeaders(url: string, headers: Record<string, string>): Promise<void> {
-    return this.send('load_url_with_headers', { url, headers })
-  }
-  url(): Promise<string> {
-    return this.send('url')
-  }
-  evaluateScript(script: string): Promise<void> {
-    return this.send('evaluate_script', script)
-  }
+  /** 获取当前 WebView URL */
+  url(): string { return native.windowUrl(this.label) }
+  /** 执行 JS 脚本（无返回值） */
+  evaluateScript(script: string): void { native.windowEvaluateScript(this.label, script) }
+  /** 执行 JS 脚本并返回结果 */
   evaluateScriptReturnResult(script: string): Promise<string> {
-    return getCurrentApplication()!._evaluateScript(this.label, script)
+    return this.app._evaluateScript(this.label, script)
   }
-  print(): Promise<void> {
-    return this.send('print')
+  /** 打印页面 */
+  print(): void { native.windowPrint(this.label) }
+  /** 打开开发者工具 */
+  openDevtools(): void { native.windowOpenDevtools(this.label) }
+  /** 关闭开发者工具 */
+  closeDevtools(): void { native.windowCloseDevtools(this.label) }
+  /** 开发者工具是否打开 */
+  isDevtoolsOpen(): boolean { return native.windowIsDevtoolsOpen(this.label) }
+  /** 设置 WebView 缩放比例 */
+  zoom(scale: number): void { native.windowZoom(this.label, scale) }
+  /** 获取窗口缩放因子 */
+  scaleFactor(): number { return native.windowScaleFactor(this.label) }
+  /** 清除所有浏览数据 */
+  clearAllBrowsingData(): void { native.windowClearAllBrowsingData(this.label) }
+  /** 设置 WebView 背景色 [r, g, b, a] (0-255) */
+  setBackgroundColor(color: [number, number, number, number]): void {
+    native.windowSetBackgroundColor(this.label, json(color))
   }
-  openDevtools(): Promise<void> {
-    return this.send('open_devtools')
-  }
-  closeDevtools(): Promise<void> {
-    return this.send('close_devtools')
-  }
-  isDevtoolsOpen(): Promise<boolean> {
-    return this.send('is_devtools_open')
-  }
-  zoom(scale: number): Promise<void> {
-    return this.send('zoom', scale)
-  }
-  scaleFactor(): Promise<number> {
-    return this.send('scale_factor')
-  }
-  clearAllBrowsingData(): Promise<void> {
-    return this.send('clear_all_browsing_data')
-  }
-  setBackgroundColor(color: [number, number, number, number]): Promise<void> {
-    return this.send('set_background_color', color)
-  }
-  setWindowBackgroundColor(color: [number, number, number, number] | null): Promise<void> {
-    return this.send('set_window_background_color', color)
+  /** 设置窗口背景色 [r, g, b, a] (0-255)，传 null 恢复默认 */
+  setWindowBackgroundColor(color: [number, number, number, number] | null): void {
+    native.windowSetWindowBackgroundColor(this.label, json(color))
   }
 
   // ===== 窗口位置/尺寸 =====
 
-  position(): Promise<Position> {
-    return this.send('inner_position')
+  /** 获取客户区域位置（不含边框/标题栏） */
+  position(): Position { return parse(native.windowInnerPosition(this.label)) }
+  /** 获取窗口位置（含边框/标题栏） */
+  outerPosition(): Position { return parse(native.windowOuterPosition(this.label)) }
+  /** 设置窗口位置 */
+  setPosition(x: number, y: number): void {
+    native.windowSetOuterPosition(this.label, json({ x, y }))
   }
-  outerPosition(): Promise<Position> {
-    return this.send('outer_position')
+  /** 获取客户区域尺寸 */
+  size(): Size { return parse(native.windowInnerSize(this.label)) }
+  /** 设置客户区域尺寸，返回实际尺寸 */
+  setSize(width: number, height: number): Size {
+    return parse(native.windowSetInnerSize(this.label, json({ width, height })))
   }
-  setPosition(x: number, y: number): Promise<void> {
-    return this.send('set_outer_position', { x, y })
+  /** 获取整个窗口物理尺寸 */
+  outerSize(): Size { return parse(native.windowOuterSize(this.label)) }
+  /** 设置最小尺寸 */
+  setMinSize(width: number, height: number): void {
+    native.windowSetMinInnerSize(this.label, json({ width, height }))
   }
-  size(): Promise<Size> {
-    return this.send('inner_size')
+  /** 设置最大尺寸 */
+  setMaxSize(width: number, height: number): void {
+    native.windowSetMaxInnerSize(this.label, json({ width, height }))
   }
-  setSize(width: number, height: number): Promise<Size> {
-    return this.send('set_inner_size', { width, height })
-  }
-  outerSize(): Promise<Size> {
-    return this.send('outer_size')
-  }
-  setMinSize(width: number, height: number): Promise<void> {
-    return this.send('set_min_inner_size', { width, height })
-  }
-  setMaxSize(width: number, height: number): Promise<void> {
-    return this.send('set_max_inner_size', { width, height })
-  }
-  setInnerSizeConstraints(constraints: WindowSizeConstraints): Promise<void> {
-    return this.send('set_inner_size_constraints', constraints)
+  /** 设置尺寸约束 */
+  setInnerSizeConstraints(constraints: WindowSizeConstraints): void {
+    native.windowSetInnerSizeConstraints(this.label, json(constraints))
   }
 
   // ===== 窗口属性 =====
 
-  setTitle(title: string): Promise<void> {
-    return this.send('set_title', title)
+  /** 设置窗口标题 */
+  setTitle(title: string): void { native.windowSetTitle(this.label, title) }
+  /** 获取窗口标题 */
+  title(): string { return native.windowTitle(this.label) }
+  /** 设置窗口可见性 */
+  setVisible(visible: boolean): void { native.windowSetVisible(this.label, visible) }
+  /** 获取窗口可见性 */
+  isVisible(): boolean { return native.windowIsVisible(this.label) }
+  /** 设置窗口是否可调整大小 */
+  setResizable(resizable: boolean): void { native.windowSetResizable(this.label, resizable) }
+  /** 获取窗口是否可调整大小 */
+  isResizable(): boolean { return native.windowIsResizable(this.label) }
+  /** 设置窗口是否可最小化 */
+  setMinimizable(minimizable: boolean): void { native.windowSetMinimizable(this.label, minimizable) }
+  /** 获取窗口是否可最小化 */
+  isMinimizable(): boolean { return native.windowIsMinimizable(this.label) }
+  /** 设置窗口是否可最大化 */
+  setMaximizable(maximizable: boolean): void { native.windowSetMaximizable(this.label, maximizable) }
+  /** 获取窗口是否可最大化 */
+  isMaximizable(): boolean { return native.windowIsMaximizable(this.label) }
+  /** 设置窗口是否可关闭 */
+  setClosable(closable: boolean): void { native.windowSetClosable(this.label, closable) }
+  /** 获取窗口是否可关闭 */
+  isClosable(): boolean { return native.windowIsClosable(this.label) }
+  /** 设置启用的控制按钮 */
+  setEnabledButtons(buttons: WindowButton[] = ['close', 'maximize', 'minimize']): void {
+    native.windowSetEnabledButtons(this.label, json(buttons))
   }
-  title(): Promise<string> {
-    return this.send('title')
-  }
-  setVisible(visible: boolean): Promise<void> {
-    return this.send('set_visible', visible)
-  }
-  isVisible(): Promise<boolean> {
-    return this.send('is_visible')
-  }
-  setResizable(resizable: boolean): Promise<void> {
-    return this.send('set_resizable', resizable)
-  }
-  isResizable(): Promise<boolean> {
-    return this.send('is_resizable')
-  }
-  setMinimizable(minimizable: boolean): Promise<void> {
-    return this.send('set_minimizable', minimizable)
-  }
-  isMinimizable(): Promise<boolean> {
-    return this.send('is_minimizable')
-  }
-  setMaximizable(maximizable: boolean): Promise<void> {
-    return this.send('set_maximizable', maximizable)
-  }
-  isMaximizable(): Promise<boolean> {
-    return this.send('is_maximizable')
-  }
-  setClosable(closable: boolean): Promise<void> {
-    return this.send('set_closable', closable)
-  }
-  isClosable(): Promise<boolean> {
-    return this.send('is_closable')
-  }
-  setEnabledButtons(buttons: WindowButton[] = ['close', 'maximize', 'minimize']): Promise<void> {
-    return this.send('set_enabled_buttons', buttons)
-  }
-  enabledButtons(): Promise<WindowButton[]> {
-    return this.send('enabled_buttons')
-  }
-  minimized(): Promise<void> {
-    return this.send('set_minimized', true)
-  }
-  unminimized(): Promise<void> {
-    return this.send('set_minimized', false)
-  }
-  isMinimized(): Promise<boolean> {
-    return this.send('is_minimized')
-  }
-  maximized(): Promise<void> {
-    return this.send('set_maximized', true)
-  }
-  unmaximized(): Promise<void> {
-    return this.send('set_maximized', false)
-  }
-  isMaximized(): Promise<boolean> {
-    return this.send('is_maximized')
-  }
+  /** 获取启用的控制按钮 */
+  enabledButtons(): WindowButton[] { return parse(native.windowEnabledButtons(this.label)) }
+  /** 最小化窗口 */
+  minimized(): void { native.windowSetMinimized(this.label, true) }
+  /** 取消最小化 */
+  unminimized(): void { native.windowSetMinimized(this.label, false) }
+  /** 获取窗口是否最小化 */
+  isMinimized(): boolean { return native.windowIsMinimized(this.label) }
+  /** 最大化窗口 */
+  maximized(): void { native.windowSetMaximized(this.label, true) }
+  /** 取消最大化 */
+  unmaximized(): void { native.windowSetMaximized(this.label, false) }
+  /** 获取窗口是否最大化 */
+  isMaximized(): boolean { return native.windowIsMaximized(this.label) }
 
   // ===== 全屏/装饰/层级 =====
 
-  fullscreen(monitorId?: null | Monitor['monitorId']): Promise<void> {
-    return this.send('fullscreen', monitorId ?? null)
-  }
-  unfullscreen(): Promise<void> {
-    return this.send('unfullscreen')
-  }
-  isFullscreen(): Promise<Monitor['monitorId'] | boolean> {
-    return this.send('is_fullscreen')
-  }
-  setDecorations(decorations: boolean): Promise<void> {
-    return this.send('set_decorations', decorations)
-  }
-  isDecorated(): Promise<boolean> {
-    return this.send('is_decorated')
-  }
   /**
-   * 设置无边框窗口
-   *
-   * 无边框窗口可通过 CSS `-webkit-app-region: drag` 拖动窗口，
-   * `-webkit-app-region: no-drag` 排除交互区域。
+   * 进入全屏
+   * @param monitorId - null 当前显示器全屏，传入 monitorId 在指定显示器全屏
    */
-  borderless(borderless = true): Promise<void> {
-    return this.setDecorations(!borderless)
+  fullscreen(monitorId?: null | Monitor['monitorId']): void {
+    native.windowFullscreen(this.label, json(monitorId ?? null))
   }
-  async isBorderless(): Promise<boolean> {
-    return !(await this.isDecorated())
+  /** 退出全屏 */
+  unfullscreen(): void { native.windowUnfullscreen(this.label) }
+  /**
+   * 获取全屏状态
+   * @returns true=当前全屏，monitorId=指定显示器全屏，false=未全屏
+   */
+  isFullscreen(): Monitor['monitorId'] | boolean {
+    const result = native.windowIsFullscreen(this.label)
+    return result === 'true' ? true : result === 'false' ? false : parse<number>(result)
   }
-  setAlwaysOnTop(top = true): Promise<void> {
-    return this.send('set_always_on_top', top)
-  }
-  isAlwaysOnTop(): Promise<boolean> {
-    return this.send('is_always_on_top')
-  }
-  setAlwaysOnBottom(bottom = true): Promise<void> {
-    return this.send('set_always_on_bottom', bottom)
-  }
+  /** 设置窗口装饰（标题栏、边框） */
+  setDecorations(decorations: boolean): void { native.windowSetDecorations(this.label, decorations) }
+  /** 获取窗口是否有装饰 */
+  isDecorated(): boolean { return native.windowIsDecorated(this.label) }
+  /** 设置无边框（等同于 setDecorations(!borderless)） */
+  borderless(borderless = true): void { this.setDecorations(!borderless) }
+  /** 获取是否无边框 */
+  isBorderless(): boolean { return !this.isDecorated() }
+  /** 设置置顶 */
+  setAlwaysOnTop(top = true): void { native.windowSetAlwaysOnTop(this.label, top) }
+  /** 获取是否置顶 */
+  isAlwaysOnTop(): boolean { return native.windowIsAlwaysOnTop(this.label) }
+  /** 设置置底 */
+  setAlwaysOnBottom(bottom = true): void { native.windowSetAlwaysOnBottom(this.label, bottom) }
 
   // ===== 外观/行为 =====
 
-  setIcon(icon: string): Promise<void> {
-    return this.send('set_window_icon', icon)
+  /** 设置窗口图标 (Windows/X11) */
+  setIcon(icon: string): void { native.windowSetWindowIcon(this.label, icon) }
+  /** 聚焦窗口 */
+  focus(): void { native.windowFocus(this.label) }
+  /** 获取窗口是否有焦点 */
+  hasFocus(): boolean { return native.windowHasFocus(this.label) }
+  /** 设置输入法位置 */
+  setImePosition(position: Position): void {
+    native.windowSetImePosition(this.label, json(position))
   }
-  focus(): Promise<void> {
-    return this.send('focus_window')
+  /** 设置任务栏进度条，传 null 移除 */
+  setProgressBar(progress: ProgressBarOptions | null): void {
+    native.windowSetProgressBar(this.label, json(progress))
   }
-  hasFocus(): Promise<boolean> {
-    return this.send('has_focus')
+  /** 请求用户注意（闪烁任务栏/Dock 图标） */
+  requestUserAttention(type: UserAttentionType = 'critical'): void {
+    native.windowRequestUserAttention(this.label, json(type))
   }
-  setImePosition(position: Position): Promise<void> {
-    return this.send('set_ime_position', position)
+  /** 取消注意力请求 */
+  cancelUserAttentionRequest(): void {
+    native.windowRequestUserAttention(this.label, 'null')
   }
-  setProgressBar(progress: ProgressBarOptions | null): Promise<void> {
-    return this.send('set_progress_bar', progress)
+  /**
+   * 设置窗口主题
+   * @param theme - 'light' | 'dark' | null 跟随系统 | 'default' 跟随系统
+   */
+  setTheme(theme: Theme | 'default' | null): void {
+    native.windowSetTheme(this.label, json(theme === 'default' ? null : theme))
   }
-  requestUserAttention(type: UserAttentionType = 'critical'): Promise<void> {
-    return this.send('request_user_attention', type)
-  }
-  cancelUserAttentionRequest(): Promise<void> {
-    return this.send('request_user_attention', null)
-  }
-  setTheme(theme: Theme | 'default' | null): Promise<void> {
-    return this.send('set_theme', theme === 'default' ? null : theme)
-  }
-  theme(): Promise<Theme | null> {
-    return this.send('theme')
-  }
-  setContentProtection(enabled: boolean): Promise<void> {
-    return this.send('set_content_protection', enabled)
-  }
-  setVisibleOnAllWorkspaces(visible: boolean): Promise<void> {
-    return this.send('set_visible_on_all_workspaces', visible)
+  /** 获取窗口主题 */
+  theme(): Theme | null { return native.windowTheme(this.label) as Theme }
+  /** 设置内容保护（防截屏） */
+  setContentProtection(enabled: boolean): void { native.windowSetContentProtection(this.label, enabled) }
+  /** 设置在所有工作区可见 */
+  setVisibleOnAllWorkspaces(visible: boolean): void {
+    native.windowSetVisibleOnAllWorkspaces(this.label, visible)
   }
 
   // ===== 光标 =====
 
-  setCursorIcon(cursor: CursorIcon): Promise<void> {
-    return this.send('set_cursor_icon', cursor)
+  /** 设置光标图标 */
+  setCursorIcon(cursor: CursorIcon): void { native.windowSetCursorIcon(this.label, cursor) }
+  /** 设置光标位置 */
+  setCursorPosition(position: Position): void {
+    native.windowSetCursorPosition(this.label, json(position))
   }
-  setCursorPosition(position: Position): Promise<void> {
-    return this.send('set_cursor_position', position)
+  /** 锁定/解锁光标 */
+  setCursorGrab(grab: boolean): void { native.windowSetCursorGrab(this.label, grab) }
+  /** 设置光标可见性 */
+  setCursorVisible(visible: boolean): void { native.windowSetCursorVisible(this.label, visible) }
+  /** 拖拽窗口（需鼠标左键按下） */
+  dragWindow(): void { native.windowDragWindow(this.label) }
+  /** 拖拽调整窗口大小（需鼠标左键按下，macOS 不支持） */
+  dragResizeWindow(direction: ResizeDirection): void {
+    native.windowDragResizeWindow(this.label, direction)
   }
-  setCursorGrab(grab: boolean): Promise<void> {
-    return this.send('set_cursor_grab', grab)
+  /** 忽略光标事件（窗口穿透） */
+  setIgnoreCursorEvents(ignore: boolean): void {
+    native.windowSetIgnoreCursorEvents(this.label, ignore)
   }
-  setCursorVisible(visible: boolean): Promise<void> {
-    return this.send('set_cursor_visible', visible)
-  }
-  dragWindow(): Promise<void> {
-    return this.send('drag_window')
-  }
-  dragResizeWindow(direction: ResizeDirection): Promise<void> {
-    return this.send('drag_resize_window', direction)
-  }
-  setIgnoreCursorEvents(ignore: boolean): Promise<void> {
-    return this.send('set_ignore_cursor_events', ignore)
-  }
-  cursorPosition(): Promise<Position> {
-    return this.send('cursor_position')
-  }
-
-  // ===== 内部方法 =====
-
-  private async create(props: BrowserWindowAttributes): Promise<WindowId> {
-    const id = await this.send('create', props)
-    this._id = id
-    this.app._emit(this.label, 'created', id)
-    return id
-  }
-
-  private send<T = any>(method: string, data?: any): Promise<T> {
-    return this.app._sendIoMessage({ method, data, label: this.label })
-  }
+  /** 获取光标位置 */
+  cursorPosition(): Position { return parse(native.windowCursorPosition(this.label)) }
 
   private get app() {
     const app = getCurrentApplication()

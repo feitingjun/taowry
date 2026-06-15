@@ -24,20 +24,6 @@ fn emit(msg: Value) {
   }
 }
 
-/// 发送响应消息
-pub fn send_response(id: &str, label: &str, method: &str, data: Value) {
-  emit(serde_json::json!({
-    "id": id, "type": "response", "method": method, "label": label, "data": data
-  }));
-}
-
-/// 发送错误响应
-pub fn send_error(id: &str, label: &str, method: &str, error: &str) {
-  emit(serde_json::json!({
-    "id": id, "type": "response", "method": method, "label": label, "error": error
-  }));
-}
-
 /// 发送窗口事件
 pub fn send_window_event(label: &str, method: &str, data: Value) {
   emit(serde_json::json!({

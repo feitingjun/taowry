@@ -48,6 +48,9 @@ const rpc = defineRPC<RPC>({
   },
   messages: {
     update: async data => {
+      setTimeout(() => {
+        app.bounceDock()
+      }, 2000)
       console.log('收到消息:', data.message)
       win.setResizable(false)
     }
@@ -60,17 +63,11 @@ const win = new BrowserWindow<RPC>('main', {
   height: 400,
   url: 'views://localhost/index.html',
   rpc: rpc,
-  devtools: true
+  devtools: true,
+  titleBarStyle: 'hiddenInset'
 })
 
 win.onClose(() => {
   console.log('关闭窗口')
   app.quit()
 })
-
-setTimeout(() => {
-  app.bounceDock()
-}, 2000)
-
-await app.run()
-console.log(111111111111)

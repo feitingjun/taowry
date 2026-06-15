@@ -1,5 +1,5 @@
 import type { MenuItemOptions } from './types'
-import { getCurrentApplication } from './app'
+import { native, json } from './native-module'
 
 /**
  * Menu - 内部菜单栏管理类
@@ -13,11 +13,9 @@ export class Menu {
   constructor(label: string, items: MenuItemOptions[] = []) {
     this.label = label
     this._items = items.map((item, index) => normalizeMenuItem(item, `${label}:${index}`))
-    this.created = app()._sendIoMessage({
-      label,
-      method: 'create_menu',
-      data: this._items
-    })
+    // 同步创建菜单
+    native.createMenu(label, json(this._items))
+    this.created = Promise.resolve()
   }
 
   /** 获取菜单项列表 */
@@ -36,10 +34,4 @@ function normalizeMenuItem(item: MenuItemOptions, fallbackId: string): MenuItemO
   }
   if (item.checked !== undefined && !normalized.type) normalized.type = 'check'
   return normalized
-}
-
-function app() {
-  const current = getCurrentApplication()
-  if (!current) throw new Error('Create an Application before creating menus')
-  return current
 }

@@ -4,20 +4,15 @@
 //! 管理窗口、菜单、托盘的生命周期。
 
 use crate::channel;
-use crate::command::{handle_command, Command};
-use crate::event::handle_window_event;
 use crate::protocol::ProtocolState;
 use crate::rpc::{parse_ipc_message, RpcMessageType, RpcState};
 use crate::window::{load_tao_icon, load_tray_icon, BrowserWindow};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::thread;
 use tao::dpi::{LogicalPosition, LogicalSize, Size};
-use tao::event::{Event, StartCause};
-use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy, EventLoopWindowTarget};
+use tao::event_loop::{EventLoopBuilder, EventLoopProxy, EventLoopWindowTarget};
 use tao::monitor::MonitorHandle;
 use tao::window::{Fullscreen, Theme, WindowBuilder, WindowId};
 use tray_icon::menu::{
@@ -29,10 +24,8 @@ use wry::{DragDropEvent, NewWindowResponse, PageLoadEvent, Rect, WebViewBuilder}
 
 /// 事件循环中的用户事件类型
 pub enum Action {
-  ForwardCommand(Command),
   TrayIconEvent(TrayIconEvent),
   MenuEvent(MenuEvent),
-  Ready,
 }
 
 /// 被管理的菜单类型（顶层菜单或子菜单）
@@ -59,6 +52,12 @@ pub struct Application {
   pub trays: HashMap<String, TrayIcon>,
   pub proxy: Option<EventLoopProxy<Action>>,
   menu_counter: u64,
+}
+
+impl Default for Application {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Application {
@@ -377,7 +376,7 @@ impl Application {
   pub fn handle_tray_event_pub(&self, event: TrayIconEvent) {
     let label = event.id().as_ref().to_string();
     let (method, data) = tray_event_payload(event);
-    channel::send_tray_event(&label, &method, data);
+    channel::send_tray_event(&label, method, data);
   }
 
   pub fn handle_menu_event_pub(&self, event: MenuEvent) {
@@ -665,22 +664,18 @@ fn apply_webview_options<'a>(
           );
         }
         RpcMessageType::Response => {
-          // WebView 对 Host→WebView 请求的响应：
-          // 查找 rpc_id 对应的 _ioc: 消息 ID，直接发送 _ioc: 响应给 Node.js，
-          // 解析 _sendIoMessage 创建的 Promise
+          // WebView 对 Host→WebView 请求的响应：调用存储的回调
           if let Some(rpc_id) = rpc_msg.id {
             if let Ok(mut state) = ipc_rpc_state.lock() {
-              if let Some(ioc_id) = state.resolve_host_request(rpc_id) {
+              if let Some(callback) = state.resolve_host_request(rpc_id) {
                 if let Some(error) = &rpc_msg.error {
-                  channel::send_error(&ioc_id, &ipc_label, "rpc_invoke", error);
+                  callback(Err(error.clone()));
                 } else {
-                  channel::send_response(&ioc_id, &ipc_label, "rpc_invoke", rpc_msg.data);
+                  callback(Ok(rpc_msg.data));
                 }
-                return;
               }
             }
           }
-          // 如果找不到对应的 pending 请求，忽略此响应
         }
         RpcMessageType::Send => {
           channel::send_window_event(
