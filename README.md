@@ -999,7 +999,7 @@ interface MenuItemOptions {
 
 7. **无边框窗口拖动**：wry 0.55+ 原生支持 CSS `-webkit-app-region: drag` 拖动窗口，`-webkit-app-region: no-drag` 排除交互区域（按钮、输入框等），无需额外代码。
 
-8. **本地开发**：运行 `bun run build` 编译 Rust 原生模块（build.sh 会自动同步到 `src/ts/` 和 `binary/`），然后通过 `bun start` 运行测试。修改 Rust 代码后必须重新编译。
+8. **本地开发**：运行 `build:dev` 编译 Rust 原生模块。
 
 9. **views:// 协议**：WebView 端所有 `views://` 请求通过 Rust → Node IPC 中转处理。请求体和响应体使用 base64 编码传输，对于常规 HTML/JS/CSS 内容（KB 到几百 KB）无性能问题，大型资源（MB 级别）可能有延迟。
 
