@@ -699,14 +699,14 @@ fn rpc_send(label: String, event: String, data: String) -> Result<()> {
     })
 }
 
-/// 回复 views:// 自定义协议请求
+/// 回复自定义协议请求（body 为 Buffer 直传，零拷贝）
 #[napi]
 fn protocol_response(
     label: String,
     request_id: String,
     status_code: u32,
     headers: String,
-    body: String,
+    body: Buffer,
 ) -> Result<()> {
     let headers_value: Value =
         serde_json::from_str(&headers).unwrap_or(Value::Object(serde_json::Map::new()));
@@ -714,14 +714,7 @@ fn protocol_response(
         let win = app
             .get_window(&label)
             .ok_or_else(|| Error::from_reason(format!("window '{}' does not exist", label)))?;
-        let body = if body.is_empty() {
-            Vec::new()
-        } else {
-            use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-            BASE64
-                .decode(&body)
-                .map_err(|e| Error::from_reason(format!("invalid base64 data: {}", e)))?
-        };
+        let body: Vec<u8> = body.into();
         let mut response_builder = wry::http::Response::builder().status(status_code as u16);
         if let Some(headers_obj) = headers_value.as_object() {
             for (key, value) in headers_obj {

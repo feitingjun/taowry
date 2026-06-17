@@ -23,13 +23,6 @@ export const getCurrentApplication = (): Application | undefined => {
   return (globalThis as any)[CURRENT_APP_KEY]
 }
 
-/** 将字符串或 Uint8Array 编码为 base64 */
-function encodeToBase64(data: string | Uint8Array): string {
-  return typeof data === 'string'
-    ? Buffer.from(data, 'utf-8').toString('base64')
-    : Buffer.from(data).toString('base64')
-}
-
 /**
  * Application - 应用实例管理器
  * 构造函数即启动 Rust 事件循环，无需调用 run()
@@ -300,7 +293,7 @@ export default class Application {
     requestId: string,
     statusCode: number,
     headers: Record<string, string>,
-    body: string
+    body: Buffer
   ) {
     native.protocolResponse(label, requestId, statusCode, json(headers), body)
   }
@@ -329,31 +322,25 @@ export default class Application {
     data: { requestId: string; uri: string; method: string; headers: Record<string, string>; body?: string }
   ) {
     if (!this._protocol) {
-      this._respond(
-        label,
-        data.requestId,
-        404,
-        { 'content-type': 'text/plain' },
-        encodeToBase64('No protocol handler registered')
-      )
+      this._respond(label, data.requestId, 404, { 'content-type': 'text/plain' }, Buffer.from('No protocol handler registered'))
       return
     }
     try {
       const request = this._buildRequest(data)
       const response = await this._protocol(request)
-      const body = new Uint8Array(await response.arrayBuffer())
+      const body = Buffer.from(new Uint8Array(await response.arrayBuffer()))
       const responseHeaders: Record<string, string> = {}
       response.headers.forEach((value, key) => {
         responseHeaders[key] = value
       })
-      this._respond(label, data.requestId, response.status, responseHeaders, encodeToBase64(body))
+      this._respond(label, data.requestId, response.status, responseHeaders, body)
     } catch (err: any) {
       this._respond(
         label,
         data.requestId,
         500,
         { 'content-type': 'text/plain' },
-        encodeToBase64(err?.message || String(err))
+        Buffer.from(err?.message || String(err))
       )
     }
   }
@@ -384,13 +371,7 @@ export default class Application {
   /** 处理 assets:// 静态资源请求 */
   private _handleAssetsRequest(label: string, data: { requestId: string; uri: string }) {
     if (!this._assetsDir) {
-      this._respond(
-        label,
-        data.requestId,
-        404,
-        { 'content-type': 'text/plain' },
-        encodeToBase64('No assets directory configured')
-      )
+      this._respond(label, data.requestId, 404, { 'content-type': 'text/plain' }, Buffer.from('No assets directory configured'))
       return
     }
 
@@ -402,25 +383,19 @@ export default class Application {
     const clean = data.uri.replace(/^assets:\/\/[^/]*\//, '')
 
     if (!clean || clean.includes('..')) {
-      this._respond(label, data.requestId, 403, { 'content-type': 'text/plain' }, encodeToBase64('Forbidden'))
+      this._respond(label, data.requestId, 403, { 'content-type': 'text/plain' }, Buffer.from('Forbidden'))
       return
     }
 
     const filePath = join(this._assetsDir, clean)
 
     try {
-      const content = readFileSync(filePath)
+      const content = readFileSync(filePath)  // 返回 Buffer，直传零拷贝
       const ext = extname(filePath).toLowerCase()
       const mime = Application.MIME_MAP[ext] || 'application/octet-stream'
-      this._respond(label, data.requestId, 200, { 'content-type': mime }, content.toString('base64'))
+      this._respond(label, data.requestId, 200, { 'content-type': mime, 'access-control-allow-origin': '*' }, content)
     } catch {
-      this._respond(
-        label,
-        data.requestId,
-        404,
-        { 'content-type': 'text/plain' },
-        encodeToBase64(`File not found: ${clean}`)
-      )
+      this._respond(label, data.requestId, 404, { 'content-type': 'text/plain' }, Buffer.from(`File not found: ${clean}`))
     }
   }
 }

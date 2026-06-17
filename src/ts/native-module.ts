@@ -102,7 +102,7 @@ export interface NativeModule {
     requestId: string,
     statusCode: number,
     headers: string,
-    body: string
+    body: Buffer
   ) => void
 
   // ===== 菜单 =====
