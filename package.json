@@ -21,7 +21,8 @@
   "scripts": {
     "build:ts": "tsc --outDir dist",
     "build:dev": "napi build --platform --release && mv index.darwin-arm64.node taowry.node",
-    "build:all": "./build.sh"
+    "build:all": "./build.sh",
+    "postinstall": "node ./scripts/postinstall.js"
   },
   "author": "",
   "license": "ISC",
