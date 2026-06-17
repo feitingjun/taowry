@@ -6,7 +6,7 @@
 use crate::channel;
 use crate::protocol::ProtocolState;
 use crate::rpc::{parse_ipc_message, RpcMessageType, RpcState};
-use crate::window::{load_tao_icon, load_tray_icon, BrowserWindow};
+use crate::window::{load_tao_icon_base64, load_tray_icon_base64, load_tray_icon_from_bytes, BrowserWindow};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -177,8 +177,8 @@ impl Application {
             return Err(format!("tray '{}' already exists", label));
         }
         let mut builder = TrayIconBuilder::new().with_id(label.clone());
-        if let Some(icon_path) = data.get("icon").and_then(Value::as_str) {
-            builder = builder.with_icon(load_tray_icon(icon_path)?);
+        if let Some(icon_base64) = data.get("icon").and_then(Value::as_str) {
+            builder = builder.with_icon(load_tray_icon_base64(icon_base64)?);
         }
         if let Some(tooltip) = data.get("tooltip").and_then(Value::as_str) {
             builder = builder.with_tooltip(tooltip);
@@ -216,16 +216,13 @@ impl Application {
             .ok_or_else(|| format!("tray '{}' does not exist", label))
     }
 
-    pub fn set_tray_icon(&self, label: &str, icon_path: Option<&str>) -> Result<(), String> {
+    pub fn set_tray_icon_bytes(&self, label: &str, icon_bytes: &[u8]) -> Result<(), String> {
         let tray = self
             .trays
             .get(label)
             .ok_or_else(|| format!("tray '{}' does not exist", label))?;
-        let icon = match icon_path {
-            Some(path) => Some(load_tray_icon(path)?),
-            None => None,
-        };
-        tray.set_icon(icon)
+        let icon = load_tray_icon_from_bytes(icon_bytes)?;
+        tray.set_icon(Some(icon))
             .map_err(|error| format!("failed to set tray icon '{}': {}", label, error))
     }
 
@@ -1033,8 +1030,8 @@ pub fn build_window_builder(
     if let Some(always_on_bottom) = data.get("alwaysOnBottom").and_then(Value::as_bool) {
         builder = builder.with_always_on_bottom(always_on_bottom);
     }
-    if let Some(icon_path) = data.get("windowIcon").and_then(Value::as_str) {
-        builder = builder.with_window_icon(Some(load_tao_icon(icon_path)?));
+    if let Some(icon_base64) = data.get("windowIcon").and_then(Value::as_str) {
+        builder = builder.with_window_icon(Some(load_tao_icon_base64(icon_base64)?));
     }
     let win_bg_color = color_from_value(data.get("windowBackgroundColor").unwrap_or(&Value::Null))?;
     if let Some(color) = win_bg_color {

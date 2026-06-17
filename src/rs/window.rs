@@ -4,7 +4,6 @@
 //! 包括窗口属性、WebView 控制、光标、显示器等功能。
 
 use image::GenericImageView;
-use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tao::dpi::{PhysicalPosition, PhysicalSize, Position, Size};
 use tao::error::{ExternalError, NotSupportedError};
@@ -286,8 +285,8 @@ impl BrowserWindow {
         self.window.set_background_color(color);
     }
 
-    pub fn set_window_icon(&self, icon_path: &str) -> Result<(), String> {
-        self.window.set_window_icon(Some(load_tao_icon(icon_path)?));
+    pub fn set_window_icon(&self, icon_bytes: &[u8]) -> Result<(), String> {
+        self.window.set_window_icon(Some(load_tao_icon_from_bytes(icon_bytes)?));
         Ok(())
     }
 
@@ -367,22 +366,38 @@ impl BrowserWindow {
     }
 }
 
-/// 加载图标文件为 tao Icon
-pub fn load_tao_icon(icon_path: &str) -> Result<Icon, String> {
-    let icon_image = image::open(Path::new(icon_path))
-        .map_err(|error| format!("failed to load icon '{}': {}", icon_path, error))?;
+/// 从字节加载图标为 tao Icon
+pub fn load_tao_icon_from_bytes(bytes: &[u8]) -> Result<Icon, String> {
+    let icon_image = image::load_from_memory(bytes)
+        .map_err(|error| format!("failed to decode icon image: {}", error))?;
     let (width, height) = icon_image.dimensions();
     let rgba_image = icon_image.to_rgba8();
     Icon::from_rgba(rgba_image.into_raw(), width, height)
-        .map_err(|error| format!("invalid icon '{}': {}", icon_path, error))
+        .map_err(|error| format!("invalid icon: {}", error))
 }
 
-/// 加载图标文件为 tray-icon Icon
-pub fn load_tray_icon(icon_path: &str) -> Result<tray_icon::Icon, String> {
-    let icon_image = image::open(Path::new(icon_path))
-        .map_err(|error| format!("failed to load tray icon '{}': {}", icon_path, error))?;
+/// 从字节加载图标为 tray-icon Icon
+pub fn load_tray_icon_from_bytes(bytes: &[u8]) -> Result<tray_icon::Icon, String> {
+    let icon_image = image::load_from_memory(bytes)
+        .map_err(|error| format!("failed to decode tray icon image: {}", error))?;
     let (width, height) = icon_image.dimensions();
     let rgba_image = icon_image.to_rgba8();
     tray_icon::Icon::from_rgba(rgba_image.into_raw(), width, height)
-        .map_err(|error| format!("invalid tray icon '{}': {}", icon_path, error))
+        .map_err(|error| format!("invalid tray icon: {}", error))
+}
+
+/// 从 base64 字符串加载图标为 tao Icon
+pub fn load_tao_icon_base64(base64_str: &str) -> Result<Icon, String> {
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+    let bytes = BASE64.decode(base64_str)
+        .map_err(|e| format!("invalid base64 icon data: {}", e))?;
+    load_tao_icon_from_bytes(&bytes)
+}
+
+/// 从 base64 字符串加载图标为 tray-icon Icon
+pub fn load_tray_icon_base64(base64_str: &str) -> Result<tray_icon::Icon, String> {
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+    let bytes = BASE64.decode(base64_str)
+        .map_err(|e| format!("invalid base64 tray icon data: {}", e))?;
+    load_tray_icon_from_bytes(&bytes)
 }

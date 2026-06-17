@@ -4,10 +4,12 @@
     "target": "ESNext",
     "allowJs": true,
     "strict": true,
-    "sourceMap": true,
     "verbatimModuleSyntax": true,
     "allowArbitraryExtensions": true,
     "rootDir": "src/ts",
+    "declaration": true,
+    "declarationMap": false,
+    "outDir": "dist",
     "types": [
       "bun"
     ]

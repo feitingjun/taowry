@@ -19,7 +19,7 @@
     "url": "git+https://github.com/feitingjun/taowry"
   },
   "scripts": {
-    "build:ts": "tsc --outDir dist",
+    "build:ts": "tsc",
     "build:dev": "napi build --platform --release && mv index.darwin-arm64.node taowry.node",
     "build:all": "./build.sh",
     "postinstall": "node ./scripts/postinstall.js"

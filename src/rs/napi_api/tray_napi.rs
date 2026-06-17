@@ -17,11 +17,10 @@ fn remove_tray(label: String) -> Result<()> {
 }
 
 #[napi]
-fn set_tray_icon(label: String, data: String) -> Result<()> {
-    let v = parse_json(&data);
-    let icon_path = v.as_str();
+fn set_tray_icon(label: String, icon: Buffer) -> Result<()> {
+    let bytes: Vec<u8> = icon.into();
     crate::with_app(|app| {
-        app.set_tray_icon(&label, icon_path)
+        app.set_tray_icon_bytes(&label, &bytes)
             .map_err(Error::from_reason)
     })
 }

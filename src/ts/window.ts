@@ -1,3 +1,4 @@
+import { readFileSync } from 'fs'
 import type {
   BrowserWindowAttributes,
   CursorIcon,
@@ -211,7 +212,10 @@ export default class BrowserWindow<T extends RPCInterface = any> {
     if (createProps.url?.startsWith('assets://')) {
       createProps.url = createProps.url.replace('assets://', 'assets://__taowry__/')
     }
-
+    // 读取窗口图标，转化为base64传入以支持虚拟路径
+    if (createProps.windowIcon) {
+      createProps.windowIcon = readFileSync(createProps.windowIcon).toBase64()
+    }
     // 同步创建窗口
     this.id = native.createWindow(label, json(createProps))
     this.app._emit(this.label, 'created', this.id)
@@ -626,7 +630,7 @@ export default class BrowserWindow<T extends RPCInterface = any> {
 
   /** 设置窗口图标 (Windows/X11) */
   setIcon(icon: string): void {
-    native.windowSetWindowIcon(this.label, icon)
+    native.windowSetWindowIcon(this.label, readFileSync(icon))
   }
   /** 聚焦窗口 */
   focus(): void {

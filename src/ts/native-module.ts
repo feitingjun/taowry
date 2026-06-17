@@ -4,6 +4,8 @@
  * 每个 napi 函数直接返回实际值（字符串、布尔、void），
  * TypeScript 端直接调用并接收返回值。
  */
+import { existsSync } from 'fs'
+import { join } from 'path'
 
 export interface NativeModule {
   // ===== 生命周期 =====
@@ -73,7 +75,7 @@ export interface NativeModule {
   windowSetAlwaysOnTop: (label: string, value: boolean) => void
   windowIsAlwaysOnTop: (label: string) => boolean
   windowSetAlwaysOnBottom: (label: string, value: boolean) => void
-  windowSetWindowIcon: (label: string, path: string) => void
+  windowSetWindowIcon: (label: string, icon: Buffer) => void
   windowSetImePosition: (label: string, data: string) => void
   windowSetProgressBar: (label: string, data: string) => void
   windowSetTheme: (label: string, data: string) => void
@@ -118,7 +120,7 @@ export interface NativeModule {
   // ===== 托盘 =====
   createTray: (label: string, data: string) => void
   removeTray: (label: string) => void
-  setTrayIcon: (label: string, data: string) => void
+  setTrayIcon: (label: string, icon: Buffer) => void
   setTrayMenu: (label: string, data: string) => void
   setTrayTooltip: (label: string, data: string) => void
   setTrayTitle: (label: string, data: string) => void
@@ -159,20 +161,18 @@ export function initNative(binary?: any): void {
   }
 
   // 自动查找：项目根目录 → npm 包安装目录
-  const path = require('path')
-  const fs = require('fs')
   const filename = 'taowry.node'
   const searchPaths: string[] = []
 
   // 1. 项目根目录（process.cwd()）
-  searchPaths.push(path.join(process.cwd(), filename))
+  searchPaths.push(join(process.cwd(), filename))
 
   // 2. npm 包安装目录（__dirname 向上查找到 taowry 包根）
   let dir = __dirname
-  searchPaths.push(path.join(dir, '..', '..', filename))
+  searchPaths.push(join(dir, '..', filename))
 
   for (const p of searchPaths) {
-    if (fs.existsSync(p)) {
+    if (existsSync(p)) {
       _native = require(p)
       return
     }

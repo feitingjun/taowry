@@ -1,3 +1,4 @@
+import { readFileSync } from 'fs'
 import type { Rect, TrayIconEvent, TrayIconOptions, MenuOptions } from './types'
 import { getCurrentApplication } from './app'
 import { Menu } from './menu'
@@ -15,7 +16,10 @@ export class Tray {
 
   constructor(label: string, options: TrayIconOptions = {}) {
     this.label = label
-
+    // 读取托盘图标，转化为base64传入以支持虚拟路径
+    if (options.icon) {
+      options.icon = readFileSync(options.icon).toBase64()
+    }
     if (options.menu) {
       const menuLabel = `${label}:auto-menu`
       this._autoMenu = new Menu(menuLabel, options.menu)
@@ -40,7 +44,7 @@ export class Tray {
 
   /** 设置托盘图标 */
   setIcon(icon: string | null): void {
-    native.setTrayIcon(this.label, json(icon))
+    native.setTrayIcon(this.label, icon ? readFileSync(icon) : Buffer.alloc(0))
   }
 
   /** 设置托盘菜单 */

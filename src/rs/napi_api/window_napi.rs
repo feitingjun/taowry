@@ -450,9 +450,10 @@ fn window_set_always_on_bottom(label: String, value: bool) -> Result<()> {
 }
 
 #[napi]
-fn window_set_window_icon(label: String, path: String) -> Result<()> {
+fn window_set_window_icon(label: String, icon: Buffer) -> Result<()> {
+    let bytes: Vec<u8> = icon.into();
     with_window(&label, |w| {
-        w.set_window_icon(&path)
+        w.set_window_icon(&bytes)
             .map_err(|e| Error::from_reason(e.to_string()))
     })
 }
