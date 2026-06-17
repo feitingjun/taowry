@@ -74,7 +74,7 @@ console.log(win.title())
 
 ## Application
 
-应用实例管理器，构造时即启动 Rust 事件循环线程，无需调用 `run()`。
+应用实例管理器，构造时即启动 Rust 事件循环线程。
 
 ```typescript
 import { Application } from 'taowry'
@@ -168,7 +168,7 @@ await app.setDockMenu([
 | `showDockIcon()` | 显示 Dock 图标 |
 | `hideDockIcon()` | 隐藏 Dock 图标 |
 | `setDockBadge(text)` | 设置 Dock badge 文本，空字符串清除 |
-| `bounceDock()` | 让 Dock 图标弹跳 |
+| `bounceDock()` | 让 Dock 图标弹跳，应用在前台时无效 |
 
 ### 显示器
 
@@ -288,7 +288,7 @@ interface MyRPC extends RPCInterface {
       renderData: (data: { items: string[] }) => { count: number }
     }
     messages: {
-      userAction: { action: string }
+      notification: { msg: string }
     }
   }>
 }
@@ -322,7 +322,12 @@ console.log(result.count)
 
 // 向 WebView 发送消息（fire-and-forget）
 win.rpc.messages.userAction({ action: 'refresh' })
+
+// 监听 Webview 消息
+win.rpc.on('pageReady', data => console.log('页面就绪:', data.url))
 ```
+
+> defineRPC 内的 messages 和 win.rpc.on() 均可注册事件监听
 
 #### WebView → Host（WebView 端调用 Host）
 
@@ -338,7 +343,7 @@ interface MyRPC extends RPCInterface {
   }>
   webview: RPCSchema<{
     requests: { renderData: (data: { items: string[] }) => { count: number } }
-    messages: { userAction: { action: string } }
+    messages: { notification: { msg: string } }
   }>
 }
 
@@ -347,7 +352,7 @@ const rpc = defineRPC<MyRPC>({
     renderData: (data) => ({ count: data.items.length })
   },
   messages: {
-    userAction: (data) => console.log('用户操作:', data.action)
+    notification: (data) => console.log('收到系统通知:', data.msg)
   }
 })
 
@@ -355,11 +360,12 @@ const rpc = defineRPC<MyRPC>({
 const user = await rpc.requests.getUserInfo({ userId: '123' })
 
 // 监听 Host 发来的消息
-rpc.on('pageReady', (data) => console.log('页面就绪:', data.url))
+rpc.on('notification', (data) => console.log('收到系统通知:', data.msg))
 
 // 向 Host 发送消息
 rpc.messages.pageReady({ url: location.href })
 ```
+> defineRPC 内的 messages 和 rpc.on() 均可注册事件监听
 
 #### 动态注册/移除处理函数
 
@@ -398,7 +404,7 @@ taowry 提供两个自定义协议，职责分离：
 
 | 协议 | 用途 | 处理方式 |
 |------|------|----------|
-| `assets://` | 静态资源加载 | Node 端从 assets 目录读取文件（支持虚拟文件系统） |
+| `assets://` | 静态资源加载 | Node 端从 assets 目录读取文件（以支持虚拟文件系统） |
 | `views://` | 动态响应 | Node 端 protocol handler 自定义逻辑 |
 
 两个协议均在 Rust 端注册，原样转发给 Node 端处理。
@@ -664,7 +670,7 @@ const theme = win.theme()
 ```typescript
 import { Tray } from 'taowry'
 
-// 创建托盘图标（菜单直接传入数组）
+// 创建托盘图标
 const tray = new Tray('myTray', {
   icon: '/path/to/icon.png',
   tooltip: 'My App',
@@ -708,7 +714,7 @@ await tray.setMenu([
 
 ## Menu 菜单配置
 
-菜单配置直接传入 `MenuItemOptions[]` 数组，无需 `{ items: [...] }` 包裹。
+菜单配置传入 `MenuItemOptions[]`。
 
 ### MenuItemOptions
 
@@ -791,8 +797,8 @@ if (win) {
 ## defineRPC
 
 创建类型安全的 RPC 配置。`defineRPC` 的 config 始终实现**本端**内容：
-- `requests`：实现对端调用的方法
-- `messages`：实现对端发来的消息
+- `requests`：实现供对端调用的方法
+- `messages`：监听对端发来的消息
 
 ```typescript
 import { defineRPC } from 'taowry'       // Host 端
@@ -1001,6 +1007,4 @@ interface MenuItemOptions {
 
 8. **本地开发**：运行 `build:dev` 编译 Rust 原生模块。
 
-9. **views:// 协议**：WebView 端所有 `views://` 请求通过 Rust → Node IPC 中转处理。请求体和响应体使用 base64 编码传输，对于常规 HTML/JS/CSS 内容（KB 到几百 KB）无性能问题，大型资源（MB 级别）可能有延迟。
-
-10. **macOS 平台依赖**：macOS 平台特定功能（Dock、事件排空）使用 `objc2` + `objc2-foundation` crate 实现原生 Objective-C 互操作，已替代旧的 `cocoa`/`objc` crate。
+9. **macOS 平台依赖**：macOS 平台特定功能（Dock、事件排空）使用 `objc2` + `objc2-foundation` crate 实现原生 Objective-C 互操作，已替代旧的 `cocoa`/`objc` crate。
