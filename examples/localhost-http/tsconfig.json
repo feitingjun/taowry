@@ -6,13 +6,13 @@
     "strict": true,
     "sourceMap": true,
     "verbatimModuleSyntax": true,
+    "jsx": "react-jsx",
     "allowArbitraryExtensions": true,
-    "rootDir": "src/ts",
     "types": [
       "bun"
     ]
   },
   "include": [
-    "src/ts/**/*.ts",
+    "src/**/*.ts",
   ]
 }

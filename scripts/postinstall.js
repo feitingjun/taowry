@@ -16,7 +16,7 @@ function getTarget() {
   let sys, cpu
   switch (platform) {
     case 'darwin': sys = 'apple-darwin'; break
-    case 'win32': sys = 'pc-windows-gnu'; break
+    case 'win32': sys = 'pc-windows-msvc'; break
     case 'linux': sys = 'unknown-linux-gnu'; break
     default: sys = 'unknown-unknown'
   }

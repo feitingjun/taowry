@@ -89,8 +89,10 @@ export type ProtocolHandler = (request: Request) => Response | Promise<Response>
 
 /** Application 构造选项 */
 export interface ApplicationOptions {
-  /** views:// 自定义协议 handler（应用级，所有窗口共享） */
+  /** views:// 动态协议 handler（应用级，所有窗口共享） */
   protocol?: ProtocolHandler
+  /** assets:// 静态资源目录，Rust 直接从文件系统加载 */
+  assets?: string
   /** 直接传入已加载的原生模块（不传则自动查找） */
   binary?: any
 }
@@ -352,9 +354,7 @@ export type RPCPromise<T, K extends PropertyKey> = T extends object
     ? T[K] extends object
       ? K extends 'messages'
         ? {
-            [K2 in keyof T[K]]: T[K][K2] extends (...args: infer A) => any
-              ? (...args: A) => void
-              : never
+            [K2 in keyof T[K]]: T[K][K2] extends (...args: infer A) => any ? (...args: A) => void : never
           }
         : {
             [K2 in keyof T[K]]: T[K][K2] extends (...args: infer A) => infer R

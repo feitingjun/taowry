@@ -104,9 +104,7 @@ export function defineRPC<T extends RPCInterface>(
   config: DefineRPCConfig<T['webview']>
 ): WebviewRPCInstance<T> {
   if (!window.__taowry) {
-    throw new Error(
-      'window.__taowry is not available. Make sure you are running inside a taowry WebView.'
-    )
+    throw new Error('window.__taowry is not available. Make sure you are running inside a taowry WebView.')
   }
   const rawRpc = window.__taowry.defineRPC({
     requests: ((config as any)?.requests ?? {}) as Record<string, (data: any) => any>,
@@ -121,9 +119,7 @@ export type RPCPromise<T, K extends PropertyKey> = T extends object
     ? T[K] extends object
       ? K extends 'messages'
         ? {
-            [K2 in keyof T[K]]: T[K][K2] extends (...args: infer A) => any
-              ? (...args: A) => void
-              : never
+            [K2 in keyof T[K]]: T[K][K2] extends (...args: infer A) => any ? (...args: A) => void : never
           }
         : {
             [K2 in keyof T[K]]: T[K][K2] extends (...args: infer A) => infer R

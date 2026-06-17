@@ -392,39 +392,62 @@ win.on('ipcMessage', (msg) => {
 })
 ```
 
-### views:// 自定义协议
+### 自定义协议
 
-WebView 端所有以 `views://` 开头的请求（页面加载、`fetch`、`<script src>`、`<img src>` 等）都会被拦截并转发到 Node 端处理。
+taowry 提供两个自定义协议，职责分离：
 
-#### 配置 protocol
+| 协议 | 用途 | 处理方式 |
+|------|------|----------|
+| `assets://` | 静态资源加载 | Node 端从 assets 目录读取文件（支持虚拟文件系统） |
+| `views://` | 动态响应 | Node 端 protocol handler 自定义逻辑 |
 
-通过 Application 统一配置协议响应逻辑（所有窗口共享）：
+两个协议均在 Rust 端注册，原样转发给 Node 端处理。
+
+#### assets:// 静态资源协议
+
+指定一个本地目录，`assets://` 请求从该目录加载文件：
 
 ```typescript
 import { Application } from 'taowry'
 
 const app = new Application({
-  protocol: async (request: Request): Promise<Response> => {
-    const url = new URL(request.url)
-    const path = url.pathname
+  assets: './dist'
+})
 
-    // 返回主页
-    if (path === '/' || path === '/index.html') {
+const win = new BrowserWindow('main', {
+  url: 'assets://index.html'  // → ./dist/index.html
+})
+```
+
+URL 路径映射：
+- `assets://index.html` → `{assets}/index.html`
+- `assets://app/index.html` → `{assets}/app/index.html`
+- `assets://css/style.css` → `{assets}/css/style.css`
+
+> 内部自动注入 host（`__taowry__`），用户无需关心 URL 结构。文件加载在 Node 端执行，兼容 Bun compile 虚拟文件系统。内置路径安全检查（防止 `..` 遍历攻击），自动推断 MIME 类型。
+
+#### views:// 动态协议
+
+所有 `views://` 请求转发到 Node 端 `protocol` handler 处理：
+
+```typescript
+const app = new Application({
+  protocol: async (request: Request): Promise<Response> => {
+    const path = new URL(request.url).pathname
+
+    if (path === '/index.html') {
       return new Response('<html><body><h1>Hello</h1></body></html>', {
         status: 200,
         headers: { 'Content-Type': 'text/html' }
       })
     }
 
-    // 返回 API 数据
-    if (path === '/api/data') {
-      return new Response(JSON.stringify({ message: 'Hello!' }), {
-        status: 200,
+    if (path.startsWith('/api/')) {
+      return new Response(JSON.stringify({ data: 'dynamic' }), {
         headers: { 'Content-Type': 'application/json' }
       })
     }
 
-    // 404
     return new Response('Not Found', { status: 404 })
   }
 })
@@ -432,33 +455,50 @@ const app = new Application({
 
 > `protocol` 使用标准 Web API 的 `Request` / `Response`，与 `fetch` 风格一致。
 
-#### 动态管理
+#### 两者组合使用
 
 ```typescript
-// 运行时更换 handler
+const app = new Application({
+  assets: './dist',   // 静态资源用 assets://
+  protocol: async (request) => {
+    // 动态 API 用 views://
+    if (request.url.includes('/api/')) {
+      return new Response(JSON.stringify({ data: 'dynamic' }), {
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+    return new Response('Not Found', { status: 404 })
+  }
+})
+
+// 页面加载静态资源
+const win = new BrowserWindow('main', {
+  url: 'assets://index.html'
+})
+
+// 页面内通过 views:// 请求动态接口
+// fetch('views://api/data')
+```
+
+#### 动态管理 views:// handler
+
+```typescript
 app.setProtocol(async (request) => {
   return new Response('new handler', { headers: { 'Content-Type': 'text/plain' } })
 })
 
-// 移除 handler（后续请求自动返回 404）
-app.removeProtocol()
+app.removeProtocol()  // 移除 handler，后续 views:// 请求返回 404
 ```
 
 #### URL 格式
 
-`views://` 协议遵循标准 URL 格式：`views://host/path`
-
 ```typescript
-// 加载主页
-url: 'views://index.html'          // host=index.html, path=/
-url: 'views://localhost/index.html' // host=localhost, path=/index.html
-
-// 子资源请求
-fetch('views://app/hello')          // host=app, path=/hello
-<script src="views://app/bundle.js"> // host=app, path=/bundle.js
+'assets://index.html'        // 加载 ./dist/index.html
+'assets://app/index.html'    // 加载 ./dist/app/index.html
+'views://api/data'           // 转发到 protocol handler
 ```
 
-> Rust 端会透传 Node 返回的所有 headers，CORS 等策略由 handler 自行控制。
+> `assets://` 省略 host 部分，直接写文件路径即可。`views://` 遵循标准 URL 格式。
 
 ### WebView 操作
 
@@ -912,7 +952,8 @@ interface ProtocolHandler {
 }
 
 interface ApplicationOptions {
-  protocol?: ProtocolHandler
+  protocol?: ProtocolHandler   // views:// 动态协议 handler
+  assets?: string              // assets:// 静态资源目录
 }
 
 interface TrayIconOptions {

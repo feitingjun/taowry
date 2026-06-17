@@ -9,45 +9,45 @@ use std::collections::HashMap;
 
 /// RPC 消息类型
 pub enum RpcMessageType {
-  /// WebView→Host 请求（request-response）
-  Request,
-  /// WebView 对 Host 请求的响应
-  Response,
-  /// WebView→Host 单向消息（fire-and-forget）
-  Send,
+    /// WebView→Host 请求（request-response）
+    Request,
+    /// WebView 对 Host 请求的响应
+    Response,
+    /// WebView→Host 单向消息（fire-and-forget）
+    Send,
 }
 
 /// 解析后的 RPC 消息
 pub struct RpcMessage {
-  pub msg_type: RpcMessageType,
-  pub id: Option<u64>,
-  pub method: Option<String>,
-  pub event: Option<String>,
-  pub data: Value,
-  pub error: Option<String>,
+    pub msg_type: RpcMessageType,
+    pub id: Option<u64>,
+    pub method: Option<String>,
+    pub event: Option<String>,
+    pub data: Value,
+    pub error: Option<String>,
 }
 
 /// 尝试将 IPC body 解析为 RPC 消息。
 /// 如果不是合法的 RPC JSON（缺少 `type` 字段或类型未知），返回 None，
 /// 调用方应回退到传统的 `ipcMessage` 透传逻辑。
 pub fn parse_ipc_message(body: &str) -> Option<RpcMessage> {
-  let parsed: Value = serde_json::from_str(body).ok()?;
-  let obj = parsed.as_object()?;
-  let msg_type = match obj.get("type")?.as_str()? {
-    "req" => RpcMessageType::Request,
-    "res" => RpcMessageType::Response,
-    "msg" => RpcMessageType::Send,
-    _ => return None,
-  };
+    let parsed: Value = serde_json::from_str(body).ok()?;
+    let obj = parsed.as_object()?;
+    let msg_type = match obj.get("type")?.as_str()? {
+        "req" => RpcMessageType::Request,
+        "res" => RpcMessageType::Response,
+        "msg" => RpcMessageType::Send,
+        _ => return None,
+    };
 
-  Some(RpcMessage {
-    msg_type,
-    id: obj.get("id").and_then(Value::as_u64),
-    method: obj.get("method").and_then(Value::as_str).map(String::from),
-    event: obj.get("event").and_then(Value::as_str).map(String::from),
-    data: obj.get("data").cloned().unwrap_or(Value::Null),
-    error: obj.get("error").and_then(Value::as_str).map(String::from),
-  })
+    Some(RpcMessage {
+        msg_type,
+        id: obj.get("id").and_then(Value::as_u64),
+        method: obj.get("method").and_then(Value::as_str).map(String::from),
+        event: obj.get("event").and_then(Value::as_str).map(String::from),
+        data: obj.get("data").cloned().unwrap_or(Value::Null),
+        error: obj.get("error").and_then(Value::as_str).map(String::from),
+    })
 }
 
 /// RPC 回调类型
@@ -58,9 +58,9 @@ pub type RpcCallback = Box<dyn FnOnce(Result<serde_json::Value, String>) + Send>
 /// 仅追踪 Host→WebView 方向的请求（`pending_host_requests`）：
 /// Rust 为该方向分配 rpc_id，并在 WebView 响应前持有对应的回调。
 pub struct RpcState {
-  host_request_counter: u64,
-  /// rpc_id → 回调映射（Host→WebView 请求追踪）
-  pending_host_requests: HashMap<u64, RpcCallback>,
+    host_request_counter: u64,
+    /// rpc_id → 回调映射（Host→WebView 请求追踪）
+    pending_host_requests: HashMap<u64, RpcCallback>,
 }
 
 impl Default for RpcState {
@@ -70,100 +70,110 @@ impl Default for RpcState {
 }
 
 impl RpcState {
-  pub fn new() -> Self {
-    Self {
-      host_request_counter: 0,
-      pending_host_requests: HashMap::new(),
+    pub fn new() -> Self {
+        Self {
+            host_request_counter: 0,
+            pending_host_requests: HashMap::new(),
+        }
     }
-  }
 
-  /// 为 Host→WebView 请求分配新的 rpc_id，并记录回调。
-  /// 返回新分配的 rpc_id。
-  pub fn assign_host_request_id<F>(&mut self, callback: F) -> u64
-  where F: FnOnce(Result<serde_json::Value, String>) + Send + 'static {
-    self.host_request_counter += 1;
-    let rpc_id = self.host_request_counter;
-    self.pending_host_requests.insert(rpc_id, Box::new(callback));
-    rpc_id
-  }
+    /// 为 Host→WebView 请求分配新的 rpc_id，并记录回调。
+    /// 返回新分配的 rpc_id。
+    pub fn assign_host_request_id<F>(&mut self, callback: F) -> u64
+    where
+        F: FnOnce(Result<serde_json::Value, String>) + Send + 'static,
+    {
+        self.host_request_counter += 1;
+        let rpc_id = self.host_request_counter;
+        self.pending_host_requests
+            .insert(rpc_id, Box::new(callback));
+        rpc_id
+    }
 
-  /// WebView 响应后，移除映射并返回回调。
-  pub fn resolve_host_request(&mut self, rpc_id: u64) -> Option<RpcCallback> {
-    self.pending_host_requests.remove(&rpc_id)
-  }
+    /// WebView 响应后，移除映射并返回回调。
+    pub fn resolve_host_request(&mut self, rpc_id: u64) -> Option<RpcCallback> {
+        self.pending_host_requests.remove(&rpc_id)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-  use super::*;
+    use super::*;
 
-  #[test]
-  fn test_parse_request() {
-    let body = r#"{"type":"req","id":1,"method":"echo","data":{"msg":"hi"}}"#;
-    let msg = parse_ipc_message(body).expect("should parse");
-    assert!(matches!(msg.msg_type, RpcMessageType::Request));
-    assert_eq!(msg.id, Some(1));
-    assert_eq!(msg.method.as_deref(), Some("echo"));
-    assert_eq!(msg.data["msg"], "hi");
-  }
+    #[test]
+    fn test_parse_request() {
+        let body = r#"{"type":"req","id":1,"method":"echo","data":{"msg":"hi"}}"#;
+        let msg = parse_ipc_message(body).expect("should parse");
+        assert!(matches!(msg.msg_type, RpcMessageType::Request));
+        assert_eq!(msg.id, Some(1));
+        assert_eq!(msg.method.as_deref(), Some("echo"));
+        assert_eq!(msg.data["msg"], "hi");
+    }
 
-  #[test]
-  fn test_parse_response() {
-    let body = r#"{"type":"res","id":2,"data":{"count":1}}"#;
-    let msg = parse_ipc_message(body).expect("should parse");
-    assert!(matches!(msg.msg_type, RpcMessageType::Response));
-    assert_eq!(msg.id, Some(2));
-    assert_eq!(msg.data["count"], 1);
-  }
+    #[test]
+    fn test_parse_response() {
+        let body = r#"{"type":"res","id":2,"data":{"count":1}}"#;
+        let msg = parse_ipc_message(body).expect("should parse");
+        assert!(matches!(msg.msg_type, RpcMessageType::Response));
+        assert_eq!(msg.id, Some(2));
+        assert_eq!(msg.data["count"], 1);
+    }
 
-  #[test]
-  fn test_parse_response_with_error() {
-    let body = r#"{"type":"res","id":3,"error":"handler failed"}"#;
-    let msg = parse_ipc_message(body).expect("should parse");
-    assert!(matches!(msg.msg_type, RpcMessageType::Response));
-    assert_eq!(msg.error.as_deref(), Some("handler failed"));
-  }
+    #[test]
+    fn test_parse_response_with_error() {
+        let body = r#"{"type":"res","id":3,"error":"handler failed"}"#;
+        let msg = parse_ipc_message(body).expect("should parse");
+        assert!(matches!(msg.msg_type, RpcMessageType::Response));
+        assert_eq!(msg.error.as_deref(), Some("handler failed"));
+    }
 
-  #[test]
-  fn test_parse_send() {
-    let body = r#"{"type":"msg","event":"update","data":{"x":1}}"#;
-    let msg = parse_ipc_message(body).expect("should parse");
-    assert!(matches!(msg.msg_type, RpcMessageType::Send));
-    assert_eq!(msg.event.as_deref(), Some("update"));
-  }
+    #[test]
+    fn test_parse_send() {
+        let body = r#"{"type":"msg","event":"update","data":{"x":1}}"#;
+        let msg = parse_ipc_message(body).expect("should parse");
+        assert!(matches!(msg.msg_type, RpcMessageType::Send));
+        assert_eq!(msg.event.as_deref(), Some("update"));
+    }
 
-  #[test]
-  fn test_parse_non_rpc_returns_none() {
-    assert!(parse_ipc_message("hello world").is_none());
-    assert!(parse_ipc_message(r#"{"foo":"bar"}"#).is_none());
-    assert!(parse_ipc_message(r#"{"type":"unknown"}"#).is_none());
-    assert!(parse_ipc_message("").is_none());
-  }
+    #[test]
+    fn test_parse_non_rpc_returns_none() {
+        assert!(parse_ipc_message("hello world").is_none());
+        assert!(parse_ipc_message(r#"{"foo":"bar"}"#).is_none());
+        assert!(parse_ipc_message(r#"{"type":"unknown"}"#).is_none());
+        assert!(parse_ipc_message("").is_none());
+    }
 
-  #[test]
-  fn test_rpc_state_host_requests() {
-    use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-    let state = RpcState::new();
-    // 使用 RefCell 在单线程测试中允许可变借用
-    let mut state = state;
-    let called1 = Arc::new(AtomicBool::new(false));
-    let called2 = Arc::new(AtomicBool::new(false));
-    let c1 = called1.clone();
-    let c2 = called2.clone();
-    let id1 = state.assign_host_request_id(move |_| { c1.store(true, Ordering::Relaxed); });
-    let id2 = state.assign_host_request_id(move |_| { c2.store(true, Ordering::Relaxed); });
-    assert_eq!(id1, 1);
-    assert_eq!(id2, 2);
+    #[test]
+    fn test_rpc_state_host_requests() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        let state = RpcState::new();
+        // 使用 RefCell 在单线程测试中允许可变借用
+        let mut state = state;
+        let called1 = Arc::new(AtomicBool::new(false));
+        let called2 = Arc::new(AtomicBool::new(false));
+        let c1 = called1.clone();
+        let c2 = called2.clone();
+        let id1 = state.assign_host_request_id(move |_| {
+            c1.store(true, Ordering::Relaxed);
+        });
+        let id2 = state.assign_host_request_id(move |_| {
+            c2.store(true, Ordering::Relaxed);
+        });
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
 
-    let cb = state.resolve_host_request(id1);
-    assert!(cb.is_some());
-    cb.unwrap()(Ok(serde_json::Value::Null));
-    assert!(called1.load(Ordering::Relaxed));
-    // 第二次 resolve 同一 ID 应返回 None
-    assert!(state.resolve_host_request(id1).is_none());
-    let cb2 = state.resolve_host_request(id2);
-    assert!(cb2.is_some());
-    cb2.unwrap()(Ok(serde_json::Value::Null));
-    assert!(called2.load(Ordering::Relaxed));
-  }
+        let cb = state.resolve_host_request(id1);
+        assert!(cb.is_some());
+        cb.unwrap()(Ok(serde_json::Value::Null));
+        assert!(called1.load(Ordering::Relaxed));
+        // 第二次 resolve 同一 ID 应返回 None
+        assert!(state.resolve_host_request(id1).is_none());
+        let cb2 = state.resolve_host_request(id2);
+        assert!(cb2.is_some());
+        cb2.unwrap()(Ok(serde_json::Value::Null));
+        assert!(called2.load(Ordering::Relaxed));
+    }
 }

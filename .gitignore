@@ -4,6 +4,8 @@
 *.node
 /package-lock.json
 /Cargo.lock
-/binary
-/.binary
 bun.lock
+taowry-app
+index
+/.qoder
+/.vscode

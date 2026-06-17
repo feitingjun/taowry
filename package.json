@@ -1,16 +1,16 @@
 {
   "name": "taowry",
-  "version": "0.1.0",
-  "main": "dist/src/ts/index.js",
-  "types": "dist/src/ts/index.d.ts",
+  "version": "0.0.1",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/src/ts/index.d.ts",
-      "default": "./dist/src/ts/index.js"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     },
     "./client": {
-      "types": "./dist/src/ts/client.d.ts",
-      "default": "./dist/src/ts/client.js"
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
     }
   },
   "homepage": "https://github.com/feitingjun/taowry",
@@ -19,8 +19,8 @@
     "url": "git+https://github.com/feitingjun/taowry"
   },
   "scripts": {
-    "start": "bun ./test/index.ts",
-    "build": "napi build --platform --release && mv index.darwin-arm64.node taowry.node",
+    "build:ts": "tsc --outDir dist",
+    "build:dev": "napi build --platform --release && mv index.darwin-arm64.node taowry.node",
     "build:all": "./build.sh"
   },
   "author": "",
@@ -29,12 +29,6 @@
   "devDependencies": {
     "@napi-rs/cli": "^3.7.0",
     "@types/bun": "^1.3.14",
-    "@types/react": "^19.2.16",
-    "@types/react-dom": "^19.2.3",
     "typescript": "^6.0.3"
-  },
-  "dependencies": {
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7"
   }
 }

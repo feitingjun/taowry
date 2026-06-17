@@ -172,9 +172,7 @@ export default class BrowserWindow<T extends RPCInterface = any> {
       Promise.resolve()
         .then(() => handler(msg.data))
         .then(result => app._rpcResolve(this.label, msg.rpcId, result))
-        .catch(err =>
-          app._rpcResolve(this.label, msg.rpcId, null, err?.message || String(err))
-        )
+        .catch(err => app._rpcResolve(this.label, msg.rpcId, null, err?.message || String(err)))
     })
 
     // 监听 WebView→Host 单向消息
@@ -182,7 +180,11 @@ export default class BrowserWindow<T extends RPCInterface = any> {
       const listeners = (this._rpcMessageListeners[msg.event] || []).slice()
       queueMicrotask(() => {
         for (const cb of listeners) {
-          try { cb(msg.data) } catch (e) { console.error(`RPC message listener error [${msg.event}]:`, e) }
+          try {
+            cb(msg.data)
+          } catch (e) {
+            console.error(`RPC message listener error [${msg.event}]:`, e)
+          }
         }
       })
     })
@@ -202,6 +204,12 @@ export default class BrowserWindow<T extends RPCInterface = any> {
     if (menuConfig) {
       const menuLabel = `${label}:auto-menu`
       this._autoMenu = new Menu(menuLabel, menuConfig)
+    }
+
+    // assets:// 协议：自动注入内部 host，确保 URL 结构完整
+    // assets://index.html → assets://__taowry__/index.html
+    if (createProps.url?.startsWith('assets://')) {
+      createProps.url = createProps.url.replace('assets://', 'assets://__taowry__/')
     }
 
     // 同步创建窗口
@@ -234,27 +242,49 @@ export default class BrowserWindow<T extends RPCInterface = any> {
   }
 
   /** 监听窗口创建完成 */
-  onCreated(callback: (id: WindowId) => void) { return this.on('created', callback) }
+  onCreated(callback: (id: WindowId) => void) {
+    return this.on('created', callback)
+  }
   /** 监听窗口移动 */
-  onMove(callback: (data: Position) => void) { return this.on('move', callback) }
+  onMove(callback: (data: Position) => void) {
+    return this.on('move', callback)
+  }
   /** 监听窗口关闭 */
-  onClose(callback: () => void) { return this.on('close', callback) }
+  onClose(callback: () => void) {
+    return this.on('close', callback)
+  }
   /** 监听窗口销毁 */
-  onDestroy(callback: () => void) { return this.on('destroy', callback) }
+  onDestroy(callback: () => void) {
+    return this.on('destroy', callback)
+  }
   /** 监听窗口失去焦点 */
-  onBlur(callback: () => void) { return this.on('blur', callback) }
+  onBlur(callback: () => void) {
+    return this.on('blur', callback)
+  }
   /** 监听窗口获得焦点 */
-  onFocus(callback: () => void) { return this.on('focus', callback) }
+  onFocus(callback: () => void) {
+    return this.on('focus', callback)
+  }
   /** 监听鼠标在窗口上移动 */
-  onCursorMove(callback: (data: Position) => void) { return this.on('cursorMove', callback) }
+  onCursorMove(callback: (data: Position) => void) {
+    return this.on('cursorMove', callback)
+  }
   /** 监听鼠标进入窗口 */
-  onCursorEnter(callback: () => void) { return this.on('cursorEnter', callback) }
+  onCursorEnter(callback: () => void) {
+    return this.on('cursorEnter', callback)
+  }
   /** 监听鼠标离开窗口 */
-  onCursorOut(callback: () => void) { return this.on('cursorOut', callback) }
+  onCursorOut(callback: () => void) {
+    return this.on('cursorOut', callback)
+  }
   /** 监听主题变更 */
-  onTheme(callback: (data: Theme) => void) { return this.on('theme', callback) }
+  onTheme(callback: (data: Theme) => void) {
+    return this.on('theme', callback)
+  }
   /** 监听窗口大小变更 */
-  onResize(callback: (data: Size) => void) { return this.on('resize', callback) }
+  onResize(callback: (data: Size) => void) {
+    return this.on('resize', callback)
+  }
 
   // ===== 菜单 =====
 
@@ -331,9 +361,13 @@ export default class BrowserWindow<T extends RPCInterface = any> {
   }
 
   /** 动态注册 RPC 处理函数（WebView→Host 方向） */
-  handle(method: string, handler: RpcHandler) { this.rpcHandlers.set(method, handler) }
+  handle(method: string, handler: RpcHandler) {
+    this.rpcHandlers.set(method, handler)
+  }
   /** 移除已注册的 RPC 处理函数 */
-  removeHandler(method: string) { this.rpcHandlers.delete(method) }
+  removeHandler(method: string) {
+    this.rpcHandlers.delete(method)
+  }
 
   /**
    * 向 WebView 发送消息（fire-and-forget）
@@ -341,7 +375,8 @@ export default class BrowserWindow<T extends RPCInterface = any> {
    */
   sendToWebview(event: string, data?: any): void {
     const payload = json(data)
-    native.windowEvaluateScript(this.label,
+    native.windowEvaluateScript(
+      this.label,
       `window.__taowry && window.__taowry._handleSend(${json(event)}, ${payload})`
     )
   }
@@ -349,37 +384,63 @@ export default class BrowserWindow<T extends RPCInterface = any> {
   // ===== WebView 操作 =====
 
   /** 关闭窗口 */
-  close(): void { native.windowClose(this.label) }
+  close(): void {
+    native.windowClose(this.label)
+  }
   /** 请求重绘 */
-  requestRedraw(): void { native.windowRequestRedraw(this.label) }
+  requestRedraw(): void {
+    native.windowRequestRedraw(this.label)
+  }
   /** 设置 WebView URL */
-  setUrl(url: string): void { native.windowSetUrl(this.label, url) }
+  setUrl(url: string): void {
+    if (url.startsWith('assets://')) url = url.replace('assets://', 'assets://__taowry__/')
+    native.windowSetUrl(this.label, url)
+  }
   /** 带请求头加载 URL */
   loadUrlWithHeaders(url: string, headers: Record<string, string>): void {
+    if (url.startsWith('assets://')) url = url.replace('assets://', 'assets://__taowry__/')
     native.windowLoadUrlWithHeaders(this.label, json({ url, headers }))
   }
   /** 获取当前 WebView URL */
-  url(): string { return native.windowUrl(this.label) }
+  url(): string {
+    return native.windowUrl(this.label)
+  }
   /** 执行 JS 脚本（无返回值） */
-  evaluateScript(script: string): void { native.windowEvaluateScript(this.label, script) }
+  evaluateScript(script: string): void {
+    native.windowEvaluateScript(this.label, script)
+  }
   /** 执行 JS 脚本并返回结果 */
   evaluateScriptReturnResult(script: string): Promise<string> {
     return this.app._evaluateScript(this.label, script)
   }
   /** 打印页面 */
-  print(): void { native.windowPrint(this.label) }
+  print(): void {
+    native.windowPrint(this.label)
+  }
   /** 打开开发者工具 */
-  openDevtools(): void { native.windowOpenDevtools(this.label) }
+  openDevtools(): void {
+    native.windowOpenDevtools(this.label)
+  }
   /** 关闭开发者工具 */
-  closeDevtools(): void { native.windowCloseDevtools(this.label) }
+  closeDevtools(): void {
+    native.windowCloseDevtools(this.label)
+  }
   /** 开发者工具是否打开 */
-  isDevtoolsOpen(): boolean { return native.windowIsDevtoolsOpen(this.label) }
+  isDevtoolsOpen(): boolean {
+    return native.windowIsDevtoolsOpen(this.label)
+  }
   /** 设置 WebView 缩放比例 */
-  zoom(scale: number): void { native.windowZoom(this.label, scale) }
+  zoom(scale: number): void {
+    native.windowZoom(this.label, scale)
+  }
   /** 获取窗口缩放因子 */
-  scaleFactor(): number { return native.windowScaleFactor(this.label) }
+  scaleFactor(): number {
+    return native.windowScaleFactor(this.label)
+  }
   /** 清除所有浏览数据 */
-  clearAllBrowsingData(): void { native.windowClearAllBrowsingData(this.label) }
+  clearAllBrowsingData(): void {
+    native.windowClearAllBrowsingData(this.label)
+  }
   /** 设置 WebView 背景色 [r, g, b, a] (0-255) */
   setBackgroundColor(color: [number, number, number, number]): void {
     native.windowSetBackgroundColor(this.label, json(color))
@@ -392,21 +453,29 @@ export default class BrowserWindow<T extends RPCInterface = any> {
   // ===== 窗口位置/尺寸 =====
 
   /** 获取客户区域位置（不含边框/标题栏） */
-  position(): Position { return parse(native.windowInnerPosition(this.label)) }
+  position(): Position {
+    return parse(native.windowInnerPosition(this.label))
+  }
   /** 获取窗口位置（含边框/标题栏） */
-  outerPosition(): Position { return parse(native.windowOuterPosition(this.label)) }
+  outerPosition(): Position {
+    return parse(native.windowOuterPosition(this.label))
+  }
   /** 设置窗口位置 */
   setPosition(x: number, y: number): void {
     native.windowSetOuterPosition(this.label, json({ x, y }))
   }
   /** 获取客户区域尺寸 */
-  size(): Size { return parse(native.windowInnerSize(this.label)) }
+  size(): Size {
+    return parse(native.windowInnerSize(this.label))
+  }
   /** 设置客户区域尺寸，返回实际尺寸 */
   setSize(width: number, height: number): Size {
     return parse(native.windowSetInnerSize(this.label, json({ width, height })))
   }
   /** 获取整个窗口物理尺寸 */
-  outerSize(): Size { return parse(native.windowOuterSize(this.label)) }
+  outerSize(): Size {
+    return parse(native.windowOuterSize(this.label))
+  }
   /** 设置最小尺寸 */
   setMinSize(width: number, height: number): void {
     native.windowSetMinInnerSize(this.label, json({ width, height }))
@@ -423,47 +492,85 @@ export default class BrowserWindow<T extends RPCInterface = any> {
   // ===== 窗口属性 =====
 
   /** 设置窗口标题 */
-  setTitle(title: string): void { native.windowSetTitle(this.label, title) }
+  setTitle(title: string): void {
+    native.windowSetTitle(this.label, title)
+  }
   /** 获取窗口标题 */
-  title(): string { return native.windowTitle(this.label) }
+  title(): string {
+    return native.windowTitle(this.label)
+  }
   /** 设置窗口可见性 */
-  setVisible(visible: boolean): void { native.windowSetVisible(this.label, visible) }
+  setVisible(visible: boolean): void {
+    native.windowSetVisible(this.label, visible)
+  }
   /** 获取窗口可见性 */
-  isVisible(): boolean { return native.windowIsVisible(this.label) }
+  isVisible(): boolean {
+    return native.windowIsVisible(this.label)
+  }
   /** 设置窗口是否可调整大小 */
-  setResizable(resizable: boolean): void { native.windowSetResizable(this.label, resizable) }
+  setResizable(resizable: boolean): void {
+    native.windowSetResizable(this.label, resizable)
+  }
   /** 获取窗口是否可调整大小 */
-  isResizable(): boolean { return native.windowIsResizable(this.label) }
+  isResizable(): boolean {
+    return native.windowIsResizable(this.label)
+  }
   /** 设置窗口是否可最小化 */
-  setMinimizable(minimizable: boolean): void { native.windowSetMinimizable(this.label, minimizable) }
+  setMinimizable(minimizable: boolean): void {
+    native.windowSetMinimizable(this.label, minimizable)
+  }
   /** 获取窗口是否可最小化 */
-  isMinimizable(): boolean { return native.windowIsMinimizable(this.label) }
+  isMinimizable(): boolean {
+    return native.windowIsMinimizable(this.label)
+  }
   /** 设置窗口是否可最大化 */
-  setMaximizable(maximizable: boolean): void { native.windowSetMaximizable(this.label, maximizable) }
+  setMaximizable(maximizable: boolean): void {
+    native.windowSetMaximizable(this.label, maximizable)
+  }
   /** 获取窗口是否可最大化 */
-  isMaximizable(): boolean { return native.windowIsMaximizable(this.label) }
+  isMaximizable(): boolean {
+    return native.windowIsMaximizable(this.label)
+  }
   /** 设置窗口是否可关闭 */
-  setClosable(closable: boolean): void { native.windowSetClosable(this.label, closable) }
+  setClosable(closable: boolean): void {
+    native.windowSetClosable(this.label, closable)
+  }
   /** 获取窗口是否可关闭 */
-  isClosable(): boolean { return native.windowIsClosable(this.label) }
+  isClosable(): boolean {
+    return native.windowIsClosable(this.label)
+  }
   /** 设置启用的控制按钮 */
   setEnabledButtons(buttons: WindowButton[] = ['close', 'maximize', 'minimize']): void {
     native.windowSetEnabledButtons(this.label, json(buttons))
   }
   /** 获取启用的控制按钮 */
-  enabledButtons(): WindowButton[] { return parse(native.windowEnabledButtons(this.label)) }
+  enabledButtons(): WindowButton[] {
+    return parse(native.windowEnabledButtons(this.label))
+  }
   /** 最小化窗口 */
-  minimized(): void { native.windowSetMinimized(this.label, true) }
+  minimized(): void {
+    native.windowSetMinimized(this.label, true)
+  }
   /** 取消最小化 */
-  unminimized(): void { native.windowSetMinimized(this.label, false) }
+  unminimized(): void {
+    native.windowSetMinimized(this.label, false)
+  }
   /** 获取窗口是否最小化 */
-  isMinimized(): boolean { return native.windowIsMinimized(this.label) }
+  isMinimized(): boolean {
+    return native.windowIsMinimized(this.label)
+  }
   /** 最大化窗口 */
-  maximized(): void { native.windowSetMaximized(this.label, true) }
+  maximized(): void {
+    native.windowSetMaximized(this.label, true)
+  }
   /** 取消最大化 */
-  unmaximized(): void { native.windowSetMaximized(this.label, false) }
+  unmaximized(): void {
+    native.windowSetMaximized(this.label, false)
+  }
   /** 获取窗口是否最大化 */
-  isMaximized(): boolean { return native.windowIsMaximized(this.label) }
+  isMaximized(): boolean {
+    return native.windowIsMaximized(this.label)
+  }
 
   // ===== 全屏/装饰/层级 =====
 
@@ -475,7 +582,9 @@ export default class BrowserWindow<T extends RPCInterface = any> {
     native.windowFullscreen(this.label, json(monitorId ?? null))
   }
   /** 退出全屏 */
-  unfullscreen(): void { native.windowUnfullscreen(this.label) }
+  unfullscreen(): void {
+    native.windowUnfullscreen(this.label)
+  }
   /**
    * 获取全屏状态
    * @returns true=当前全屏，monitorId=指定显示器全屏，false=未全屏
@@ -485,28 +594,48 @@ export default class BrowserWindow<T extends RPCInterface = any> {
     return result === 'true' ? true : result === 'false' ? false : parse<number>(result)
   }
   /** 设置窗口装饰（标题栏、边框） */
-  setDecorations(decorations: boolean): void { native.windowSetDecorations(this.label, decorations) }
+  setDecorations(decorations: boolean): void {
+    native.windowSetDecorations(this.label, decorations)
+  }
   /** 获取窗口是否有装饰 */
-  isDecorated(): boolean { return native.windowIsDecorated(this.label) }
+  isDecorated(): boolean {
+    return native.windowIsDecorated(this.label)
+  }
   /** 设置无边框（等同于 setDecorations(!borderless)） */
-  borderless(borderless = true): void { this.setDecorations(!borderless) }
+  borderless(borderless = true): void {
+    this.setDecorations(!borderless)
+  }
   /** 获取是否无边框 */
-  isBorderless(): boolean { return !this.isDecorated() }
+  isBorderless(): boolean {
+    return !this.isDecorated()
+  }
   /** 设置置顶 */
-  setAlwaysOnTop(top = true): void { native.windowSetAlwaysOnTop(this.label, top) }
+  setAlwaysOnTop(top = true): void {
+    native.windowSetAlwaysOnTop(this.label, top)
+  }
   /** 获取是否置顶 */
-  isAlwaysOnTop(): boolean { return native.windowIsAlwaysOnTop(this.label) }
+  isAlwaysOnTop(): boolean {
+    return native.windowIsAlwaysOnTop(this.label)
+  }
   /** 设置置底 */
-  setAlwaysOnBottom(bottom = true): void { native.windowSetAlwaysOnBottom(this.label, bottom) }
+  setAlwaysOnBottom(bottom = true): void {
+    native.windowSetAlwaysOnBottom(this.label, bottom)
+  }
 
   // ===== 外观/行为 =====
 
   /** 设置窗口图标 (Windows/X11) */
-  setIcon(icon: string): void { native.windowSetWindowIcon(this.label, icon) }
+  setIcon(icon: string): void {
+    native.windowSetWindowIcon(this.label, icon)
+  }
   /** 聚焦窗口 */
-  focus(): void { native.windowFocus(this.label) }
+  focus(): void {
+    native.windowFocus(this.label)
+  }
   /** 获取窗口是否有焦点 */
-  hasFocus(): boolean { return native.windowHasFocus(this.label) }
+  hasFocus(): boolean {
+    return native.windowHasFocus(this.label)
+  }
   /** 设置输入法位置 */
   setImePosition(position: Position): void {
     native.windowSetImePosition(this.label, json(position))
@@ -531,9 +660,13 @@ export default class BrowserWindow<T extends RPCInterface = any> {
     native.windowSetTheme(this.label, json(theme === 'default' ? null : theme))
   }
   /** 获取窗口主题 */
-  theme(): Theme | null { return native.windowTheme(this.label) as Theme }
+  theme(): Theme | null {
+    return native.windowTheme(this.label) as Theme
+  }
   /** 设置内容保护（防截屏） */
-  setContentProtection(enabled: boolean): void { native.windowSetContentProtection(this.label, enabled) }
+  setContentProtection(enabled: boolean): void {
+    native.windowSetContentProtection(this.label, enabled)
+  }
   /** 设置在所有工作区可见 */
   setVisibleOnAllWorkspaces(visible: boolean): void {
     native.windowSetVisibleOnAllWorkspaces(this.label, visible)
@@ -542,17 +675,25 @@ export default class BrowserWindow<T extends RPCInterface = any> {
   // ===== 光标 =====
 
   /** 设置光标图标 */
-  setCursorIcon(cursor: CursorIcon): void { native.windowSetCursorIcon(this.label, cursor) }
+  setCursorIcon(cursor: CursorIcon): void {
+    native.windowSetCursorIcon(this.label, cursor)
+  }
   /** 设置光标位置 */
   setCursorPosition(position: Position): void {
     native.windowSetCursorPosition(this.label, json(position))
   }
   /** 锁定/解锁光标 */
-  setCursorGrab(grab: boolean): void { native.windowSetCursorGrab(this.label, grab) }
+  setCursorGrab(grab: boolean): void {
+    native.windowSetCursorGrab(this.label, grab)
+  }
   /** 设置光标可见性 */
-  setCursorVisible(visible: boolean): void { native.windowSetCursorVisible(this.label, visible) }
+  setCursorVisible(visible: boolean): void {
+    native.windowSetCursorVisible(this.label, visible)
+  }
   /** 拖拽窗口（需鼠标左键按下） */
-  dragWindow(): void { native.windowDragWindow(this.label) }
+  dragWindow(): void {
+    native.windowDragWindow(this.label)
+  }
   /** 拖拽调整窗口大小（需鼠标左键按下，macOS 不支持） */
   dragResizeWindow(direction: ResizeDirection): void {
     native.windowDragResizeWindow(this.label, direction)
@@ -562,7 +703,9 @@ export default class BrowserWindow<T extends RPCInterface = any> {
     native.windowSetIgnoreCursorEvents(this.label, ignore)
   }
   /** 获取光标位置 */
-  cursorPosition(): Position { return parse(native.windowCursorPosition(this.label)) }
+  cursorPosition(): Position {
+    return parse(native.windowCursorPosition(this.label))
+  }
 
   private get app() {
     const app = getCurrentApplication()

@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs'
+import { join, extname } from 'path'
 import type {
   AppEvent,
   Monitor,
@@ -9,7 +11,7 @@ import type {
 } from './types'
 import type BrowserWindow from './window'
 import { Menu } from './menu'
-import { native, json, parse, parseOrNull, initNative } from './native-module'
+import { native, json, parse, initNative } from './native-module'
 
 /** 用于存储全局唯一的 Application 实例 */
 const CURRENT_APP_KEY = '__taowryApp'
@@ -36,6 +38,7 @@ export default class Application {
   private listeners: Record<string, Record<string, Listener[]>> = {}
   private windows: Record<string, BrowserWindow> = {}
   private _protocol?: ProtocolHandler
+  private _assetsDir?: string
   private _ready = false
 
   constructor(options: ApplicationOptions = {}) {
@@ -46,6 +49,9 @@ export default class Application {
     ;(globalThis as any)[CURRENT_APP_KEY] = this
     if (options.protocol) {
       this._protocol = options.protocol
+    }
+    if (options.assets) {
+      this._assetsDir = options.assets
     }
 
     // 初始化 native 模块（支持用户直接传入 binary）
@@ -261,6 +267,10 @@ export default class Application {
           this._handleProtocolRequest(msg.label, msg.data)
           break
         }
+        if (msg.method === 'assetsRequest') {
+          this._handleAssetsRequest(msg.label, msg.data)
+          break
+        }
         this._emit(msg.label, msg.method, msg.data)
         break
       case 'trayEvent':
@@ -284,40 +294,133 @@ export default class Application {
     this._protocol = undefined
   }
 
+  /** 协议请求公共响应助手 */
+  private _respond(
+    label: string,
+    requestId: string,
+    statusCode: number,
+    headers: Record<string, string>,
+    body: string
+  ) {
+    native.protocolResponse(label, requestId, statusCode, json(headers), body)
+  }
+
+  /** 将 IPC 原始数据构建为标准 Request */
+  private _buildRequest(data: {
+    uri: string
+    method: string
+    headers: Record<string, string>
+    body?: string
+  }): Request {
+    const requestHeaders = new Headers()
+    if (data.headers) {
+      for (const [k, v] of Object.entries(data.headers)) requestHeaders.append(k, v)
+    }
+    const requestInit: RequestInit = { method: data.method, headers: requestHeaders }
+    if (data.body && data.method !== 'GET' && data.method !== 'HEAD') {
+      requestInit.body = new Uint8Array(Buffer.from(data.body, 'base64'))
+    }
+    return new Request(data.uri, requestInit)
+  }
+
   /** 处理 views:// 协议请求 */
   private async _handleProtocolRequest(
     label: string,
     data: { requestId: string; uri: string; method: string; headers: Record<string, string>; body?: string }
   ) {
-    const respond = (statusCode: number, headers: Record<string, string>, body: string) => {
-      native.protocolResponse(label, data.requestId, statusCode, json(headers), body)
-    }
-
     if (!this._protocol) {
-      respond(404, { 'content-type': 'text/plain' }, encodeToBase64('No protocol handler registered'))
+      this._respond(
+        label,
+        data.requestId,
+        404,
+        { 'content-type': 'text/plain' },
+        encodeToBase64('No protocol handler registered')
+      )
       return
     }
     try {
-      const requestHeaders = new Headers()
-      if (data.headers) {
-        for (const [k, v] of Object.entries(data.headers)) requestHeaders.append(k, v)
-      }
-      const requestInit: RequestInit = { method: data.method, headers: requestHeaders }
-      if (data.body && data.method !== 'GET' && data.method !== 'HEAD') {
-        requestInit.body = new Uint8Array(Buffer.from(data.body, 'base64'))
-      }
-      const request = new Request(data.uri, requestInit)
+      const request = this._buildRequest(data)
       const response = await this._protocol(request)
-
       const body = new Uint8Array(await response.arrayBuffer())
       const responseHeaders: Record<string, string> = {}
       response.headers.forEach((value, key) => {
         responseHeaders[key] = value
       })
-
-      respond(response.status, responseHeaders, encodeToBase64(body))
+      this._respond(label, data.requestId, response.status, responseHeaders, encodeToBase64(body))
     } catch (err: any) {
-      respond(500, { 'content-type': 'text/plain' }, encodeToBase64(err?.message || String(err)))
+      this._respond(
+        label,
+        data.requestId,
+        500,
+        { 'content-type': 'text/plain' },
+        encodeToBase64(err?.message || String(err))
+      )
+    }
+  }
+
+  // ===== assets:// 静态资源协议 =====
+
+  private static readonly MIME_MAP: Record<string, string> = {
+    '.html': 'text/html; charset=utf-8',
+    '.htm': 'text/html; charset=utf-8',
+    '.js': 'application/javascript; charset=utf-8',
+    '.mjs': 'application/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.svg': 'image/svg+xml',
+    '.webp': 'image/webp',
+    '.ico': 'image/x-icon',
+    '.woff': 'font/woff',
+    '.woff2': 'font/woff2',
+    '.ttf': 'font/ttf',
+    '.otf': 'font/otf',
+    '.wasm': 'application/wasm'
+  }
+
+  /** 处理 assets:// 静态资源请求 */
+  private _handleAssetsRequest(label: string, data: { requestId: string; uri: string }) {
+    if (!this._assetsDir) {
+      this._respond(
+        label,
+        data.requestId,
+        404,
+        { 'content-type': 'text/plain' },
+        encodeToBase64('No assets directory configured')
+      )
+      return
+    }
+
+    // TS 端创建窗口时已注入内部 host __taowry__：
+    //   assets://index.html → assets://__taowry__/index.html
+    // Rust 原样转发 URI，TS 端提取 path 部分作为文件路径
+    //   assets://__taowry__/index.html → index.html
+    //   assets://__taowry__/page/style.css → page/style.css
+    const clean = data.uri.replace(/^assets:\/\/[^/]*\//, '')
+
+    if (!clean || clean.includes('..')) {
+      this._respond(label, data.requestId, 403, { 'content-type': 'text/plain' }, encodeToBase64('Forbidden'))
+      return
+    }
+
+    const filePath = join(this._assetsDir, clean)
+
+    try {
+      const content = readFileSync(filePath)
+      const ext = extname(filePath).toLowerCase()
+      const mime = Application.MIME_MAP[ext] || 'application/octet-stream'
+      this._respond(label, data.requestId, 200, { 'content-type': mime }, content.toString('base64'))
+    } catch {
+      this._respond(
+        label,
+        data.requestId,
+        404,
+        { 'content-type': 'text/plain' },
+        encodeToBase64(`File not found: ${clean}`)
+      )
     }
   }
 }

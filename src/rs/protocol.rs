@@ -10,8 +10,8 @@ use wry::RequestAsyncResponder;
 
 /// 每个窗口独立的协议请求状态管理
 pub struct ProtocolState {
-  /// request_id → responder 映射
-  pending: HashMap<String, RequestAsyncResponder>,
+    /// request_id → responder 映射
+    pending: HashMap<String, RequestAsyncResponder>,
 }
 
 impl Default for ProtocolState {
@@ -21,21 +21,21 @@ impl Default for ProtocolState {
 }
 
 impl ProtocolState {
-  pub fn new() -> Self {
-    Self {
-      pending: HashMap::new(),
+    pub fn new() -> Self {
+        Self {
+            pending: HashMap::new(),
+        }
     }
-  }
 
-  /// 存储一个新的 pending 请求，返回唯一的 request_id
-  pub fn insert(&mut self, responder: RequestAsyncResponder) -> String {
-    let id = uuid::Uuid::new_v4().to_string();
-    self.pending.insert(id.clone(), responder);
-    id
-  }
+    /// 存储一个新的 pending 请求，返回唯一的 request_id
+    pub fn insert(&mut self, responder: RequestAsyncResponder) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        self.pending.insert(id.clone(), responder);
+        id
+    }
 
-  /// 消费一个 pending 请求，返回 responder（如果存在）
-  pub fn remove(&mut self, id: &str) -> Option<RequestAsyncResponder> {
-    self.pending.remove(id)
-  }
+    /// 消费一个 pending 请求，返回 responder（如果存在）
+    pub fn remove(&mut self, id: &str) -> Option<RequestAsyncResponder> {
+        self.pending.remove(id)
+    }
 }
