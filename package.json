@@ -23,7 +23,7 @@
     "build:ts": "tsc",
     "build:dev": "napi build --platform --release && mv index.darwin-arm64.node src/taowry.node",
     "build:all": "./build.sh",
-    "postinstall": "node ./scripts/postinstall.js"
+    "postinstall": "node ./scripts/postinstall.cjs"
   },
   "author": "",
   "license": "ISC",
