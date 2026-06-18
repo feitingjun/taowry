@@ -4,8 +4,6 @@
  * 每个 napi 函数直接返回实际值（字符串、布尔、void），
  * TypeScript 端直接调用并接收返回值。
  */
-import { existsSync } from 'fs'
-import { join } from 'path'
 
 export interface NativeModule {
   // ===== 生命周期 =====
@@ -151,39 +149,15 @@ let _native: NativeModule | undefined
  *
  * @param binary - 直接传入已加载的原生模块，不传则自动查找
  */
-export function initNative(binary?: any): void {
+export function initNative(): void {
   if (_native) return
 
-  // 用户直接传入已加载的模块
-  if (binary) {
-    _native = binary as NativeModule
-    return
+  // 加载 native 模块
+  if (!!process.env.BINARY_PATH) {
+    _native = require(process.env.BINARY_PATH)
+  } else {
+    _native = require('../taowry.node')
   }
-
-  // 自动查找：项目根目录 → npm 包安装目录
-  const filename = 'taowry.node'
-  const searchPaths: string[] = []
-
-  // 1. 项目根目录（process.cwd()）
-  searchPaths.push(join(process.cwd(), filename))
-
-  // 2. npm 包安装目录（__dirname 向上查找到 taowry 包根）
-  let dir = __dirname
-  searchPaths.push(join(dir, '..', filename))
-
-  for (const p of searchPaths) {
-    if (existsSync(p)) {
-      _native = require(p)
-      return
-    }
-  }
-
-  throw new Error(
-    `[taowry] 找不到 native 模块: ${filename}\n` +
-      `已搜索:\n  ${searchPaths.join('\n  ')}\n` +
-      `请运行 npm install（自动下载）或 napi build --platform（本地编译）\n` +
-      `或在 new Application({ binary: require('taowry.node') }) 中显式传入`
-  )
 }
 
 /** native 模块代理，首次访问时自动初始化 */

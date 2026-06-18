@@ -47,8 +47,8 @@ export default class Application {
       this._assetsDir = options.assets
     }
 
-    // 初始化 native 模块（支持用户直接传入 binary）
-    initNative(options.binary)
+    // 初始化 native 模块
+    initNative()
 
     // 立即启动 Rust 事件循环
     native.start((raw: string) => {
@@ -322,7 +322,13 @@ export default class Application {
     data: { requestId: string; uri: string; method: string; headers: Record<string, string>; body?: string }
   ) {
     if (!this._protocol) {
-      this._respond(label, data.requestId, 404, { 'content-type': 'text/plain' }, Buffer.from('No protocol handler registered'))
+      this._respond(
+        label,
+        data.requestId,
+        404,
+        { 'content-type': 'text/plain' },
+        Buffer.from('No protocol handler registered')
+      )
       return
     }
     try {
@@ -371,7 +377,13 @@ export default class Application {
   /** 处理 assets:// 静态资源请求 */
   private _handleAssetsRequest(label: string, data: { requestId: string; uri: string }) {
     if (!this._assetsDir) {
-      this._respond(label, data.requestId, 404, { 'content-type': 'text/plain' }, Buffer.from('No assets directory configured'))
+      this._respond(
+        label,
+        data.requestId,
+        404,
+        { 'content-type': 'text/plain' },
+        Buffer.from('No assets directory configured')
+      )
       return
     }
 
@@ -390,12 +402,24 @@ export default class Application {
     const filePath = join(this._assetsDir, clean)
 
     try {
-      const content = readFileSync(filePath)  // 返回 Buffer，直传零拷贝
+      const content = readFileSync(filePath) // 返回 Buffer，直传零拷贝
       const ext = extname(filePath).toLowerCase()
       const mime = Application.MIME_MAP[ext] || 'application/octet-stream'
-      this._respond(label, data.requestId, 200, { 'content-type': mime, 'access-control-allow-origin': '*' }, content)
+      this._respond(
+        label,
+        data.requestId,
+        200,
+        { 'content-type': mime, 'access-control-allow-origin': '*' },
+        content
+      )
     } catch {
-      this._respond(label, data.requestId, 404, { 'content-type': 'text/plain' }, Buffer.from(`File not found: ${clean}`))
+      this._respond(
+        label,
+        data.requestId,
+        404,
+        { 'content-type': 'text/plain' },
+        Buffer.from(`File not found: ${clean}`)
+      )
     }
   }
 }

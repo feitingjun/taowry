@@ -989,6 +989,39 @@ interface MenuItemOptions {
 
 ---
 
+## 打包为可执行文件（以bun为例）
+
+### 当前平台
+`taowry` 默认加载 `npm install` 时下载的 `.node` 文件，若编译目标为当前平台，无需做任何特殊操作，`bun build --compile` 执行时会自动将 `.node` 文件嵌入可执行文件中
+
+### 交叉编译
+当环境变量 `process.env.BINARY_PATH` 存在时，`taowry` 会从 `BINARY_PATH` 指定的位置加载 `.node` 文件，构建时结合 bun 的 `--define`[（查看详情）](https://bun.com/docs/guides/runtime/build-time-constants) 标志，可以将[对应平台](https://github.com/feitingjun/taowry/releases/latest)的 `.node` 嵌入可执行文件。
+
+> bun 的 require 只有在编译时能确定路径的 `.node` 文件(require不能使用变量，必须是确切的路径)，才会自动嵌入到可执行文件中。  
+> 而 bun 的 `--define` 标记会在编译时将 `BINARY_PATH` 转换为固定值
+
+```
+<!-- BINARY_PATH 使用绝对路径 -->
+bun build --compile --define process.env.BINARY_PATH=\"/path/to/taowry.node\" index.ts
+
+<!-- 或 -->
+
+await Bun.build({
+  entrypoints: ["./index.ts"],
+  compile: {
+    outfile: "./myapp",
+  },
+  define: {
+    "process.env.BINARY_PATH": '/path/to/taowry.aarch64-apple-darwin.node'
+  },
+});
+
+```
+
+除此之外，也可以使用其他方式嵌入或下载 `.node` 文件，然后将 `process.env.BINARY_PATH` 指向目标文件
+
+---
+
 ## 注意事项
 
 1. **架构**：基于 napi-rs 构建的原生模块，TS 直接同步调用 Rust napi 函数，无中间层。Application 构造时启动 Rust 事件循环线程，窗口/菜单/托盘等操作均为同步调用。

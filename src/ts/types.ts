@@ -93,8 +93,6 @@ export interface ApplicationOptions {
   protocol?: ProtocolHandler
   /** assets:// 静态资源目录，Rust 直接从文件系统加载 */
   assets?: string
-  /** 直接传入已加载的原生模块（不传则自动查找） */
-  binary?: any
 }
 
 /** 窗口尺寸约束 */
