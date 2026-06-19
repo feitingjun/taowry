@@ -1,5 +1,5 @@
 import type { MenuItemOptions } from './types'
-import { native, json } from './native-module'
+import { native, json } from './native-module.js'
 
 /**
  * Menu - 内部菜单栏管理类

@@ -1,6 +1,6 @@
-import Application, { getCurrentApplication } from './app'
-import BrowserWindow from './window'
-import { Tray } from './tray'
+import Application, { getCurrentApplication } from './app.js'
+import BrowserWindow from './window.js'
+import { Tray } from './tray.js'
 import type { RPCInterface, DefineRPCConfig } from './types'
 
 /** 通过标签名获取已创建的窗口实例 */
@@ -64,4 +64,4 @@ export function defineRPC<T extends RPCInterface>(config: DefineRPCConfig<T['hos
 
 export { Application, BrowserWindow, BrowserWindow as Window, Tray }
 
-export * from './types'
+export * from './types.js'

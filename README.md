@@ -28,6 +28,7 @@ https://github.com/feitingjun/taowry
 - [BrowserWindowAttributes](#browserwindowattributes)
 - [WindowEvent](#windowevent)
 - [类型定义](#类型定义)
+- [打包为可执行文件](#打包为可执行文件)
 - [注意事项](#注意事项)
 
 ---
@@ -989,7 +990,9 @@ interface MenuItemOptions {
 
 ---
 
-## 打包为可执行文件（以bun为例）
+## 打包为可执行文件
+
+> 以bun为例
 
 ### 当前平台
 `taowry` 默认加载 `npm install` 时下载的 `.node` 文件，若编译目标为当前平台，无需做任何特殊操作，`bun build --compile` 执行时会自动将 `.node` 文件嵌入可执行文件中
@@ -1018,7 +1021,9 @@ await Bun.build({
 
 ```
 
-除此之外，也可以使用其他方式嵌入或下载 `.node` 文件，然后将 `process.env.BINARY_PATH` 指向目标文件
+除此之外，也可以使用其他方式嵌入或下载 `.node` 文件，然后将 `process.env.BINARY_PATH` 指向目标文件  
+
+node 建议始终使用自定义的方式嵌入 `.node` 文件，然后使用 `process.env.BINARY_PATH` 变量指定 `.node` 文件位置
 
 ---
 

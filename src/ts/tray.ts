@@ -1,8 +1,8 @@
 import { readFileSync } from 'fs'
 import type { Rect, TrayIconEvent, TrayIconOptions, MenuOptions } from './types'
-import { getCurrentApplication } from './app'
-import { Menu } from './menu'
-import { native, json, parseOrNull } from './native-module'
+import { getCurrentApplication } from './app.js'
+import { Menu } from './menu.js'
+import { native, json, parseOrNull } from './native-module.js'
 
 /**
  * Tray - 系统托盘图标

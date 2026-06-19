@@ -18,9 +18,9 @@ import type {
   HostRPCInstance,
   RPCPromise
 } from './types'
-import { getCurrentApplication } from './app'
-import { Menu } from './menu'
-import { native, json, parse } from './native-module'
+import { getCurrentApplication } from './app.js'
+import { Menu } from './menu.js'
+import { native, json, parse } from './native-module.js'
 
 /** 注入到 WebView 的 RPC 桥接脚本 */
 const RPC_BRIDGE_SCRIPT = `

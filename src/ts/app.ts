@@ -10,8 +10,8 @@ import type {
   ApplicationOptions
 } from './types'
 import type BrowserWindow from './window'
-import { Menu } from './menu'
-import { native, json, parse, initNative } from './native-module'
+import { Menu } from './menu.js'
+import { native, json, parse, initNative } from './native-module.js'
 
 /** 用于存储全局唯一的 Application 实例 */
 const CURRENT_APP_KEY = '__taowryApp'

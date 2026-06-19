@@ -4,6 +4,7 @@
  * 每个 napi 函数直接返回实际值（字符串、布尔、void），
  * TypeScript 端直接调用并接收返回值。
  */
+import { createRequire } from 'module'
 
 export interface NativeModule {
   // ===== 生命周期 =====
@@ -152,12 +153,16 @@ let _native: NativeModule | undefined
 export function initNative(): void {
   if (_native) return
 
-  // 加载 native 模块
-  if (!!process.env.BINARY_PATH) {
-    _native = require(process.env.BINARY_PATH)
-  } else {
-    _native = require('../taowry.node')
+  if (process.isBun) {
+    _native = !!process.env.BINARY_PATH ? require(process.env.BINARY_PATH) : require('../taowry.node')
+    return
   }
+
+  // 创建一个兼容 ESM 的 require 函数
+  const customRequire = createRequire(import.meta.url)
+  _native = !!process.env.BINARY_PATH
+    ? customRequire(process.env.BINARY_PATH)
+    : customRequire('../taowry.node')
 }
 
 /** native 模块代理，首次访问时自动初始化 */
