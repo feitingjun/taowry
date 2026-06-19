@@ -1002,7 +1002,7 @@ interface MenuItemOptions {
 
 构建时结合 bun 的 `--define`[（查看详情）](https://bun.com/docs/guides/runtime/build-time-constants) 标志，可以将[对应平台](https://github.com/feitingjun/taowry/releases/latest)的 `.node` 嵌入可执行文件。
 
-> bun 的 `--define` 标记会在编译时将 `BINARY_PATH` 直接转换为固定值，且 bun 会自动执行死代码消除，所以不会将 `node_modules/taowry/taowry.node` 嵌入文件  
+> bun 的 `--define` 标记会在编译时将 `BINARY_PATH` 直接转换为固定值，且 bun 会自动执行死代码消除，所以不会将 `node_modules/taowry/taowry.node` 嵌入二进制文件  
 
 ```
 <!-- BINARY_PATH 使用绝对路径 -->
