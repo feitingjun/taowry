@@ -998,10 +998,11 @@ interface MenuItemOptions {
 `taowry` 默认加载 `npm install` 时下载的 `.node` 文件，若编译目标为当前平台，无需做任何特殊操作，`bun build --compile` 执行时会自动将 `.node` 文件嵌入可执行文件中
 
 ### 交叉编译
-当环境变量 `process.env.BINARY_PATH` 存在时，`taowry` 会从 `BINARY_PATH` 指定的位置加载 `.node` 文件，构建时结合 bun 的 `--define`[（查看详情）](https://bun.com/docs/guides/runtime/build-time-constants) 标志，可以将[对应平台](https://github.com/feitingjun/taowry/releases/latest)的 `.node` 嵌入可执行文件。
+当环境变量 `process.env.BINARY_PATH` 存在时，`taowry` 会从 `BINARY_PATH` 指定的位置加载 `.node` 文件。  
 
-> bun 的 require 只有在编译时能确定路径的 `.node` 文件(require不能使用变量，必须是确切的路径)，才会自动嵌入到可执行文件中。  
-> 而 bun 的 `--define` 标记会在编译时将 `BINARY_PATH` 转换为固定值
+构建时结合 bun 的 `--define`[（查看详情）](https://bun.com/docs/guides/runtime/build-time-constants) 标志，可以将[对应平台](https://github.com/feitingjun/taowry/releases/latest)的 `.node` 嵌入可执行文件。
+
+> bun 的 `--define` 标记会在编译时将 `BINARY_PATH` 直接转换为固定值，且 bun 会自动执行死代码消除，所以不会将 `node_modules/taowry/taowry.node` 嵌入文件  
 
 ```
 <!-- BINARY_PATH 使用绝对路径 -->
@@ -1021,9 +1022,15 @@ await Bun.build({
 
 ```
 
-除此之外，也可以使用其他方式嵌入或下载 `.node` 文件，然后将 `process.env.BINARY_PATH` 指向目标文件  
 
-node 建议始终使用自定义的方式嵌入 `.node` 文件，然后使用 `process.env.BINARY_PATH` 变量指定 `.node` 文件位置
+但如果要在不使用`--define` 标记的情况下使用 `process.env.BINARY_PATH` 变量加载 `.node` 文件，`node_modules/taowry/taowry.node` 默认会被嵌入到可执行文件中，可以使用 `--external` 标记在编译时将默认的 `.node` 文件排除
+
+```
+bun build --compile --external ./node_modules/taowry/taowry.node index.ts
+```
+
+
+node 环境下，始终需要手动处理 `.node` 资源的嵌入问题，然后设置 `process.env.BINARY_PATH` 从指定的位置加载。
 
 ---
 
