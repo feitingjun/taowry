@@ -1,3 +1,7 @@
+import type { RPCInterface, RPCPromise, RPCSchema, DefineRPCConfig } from './rpc-types.js'
+
+export type { RPCInterface, RPCPromise, RPCSchema, DefineRPCConfig }
+
 /** 窗口唯一标识 */
 export type WindowId = string
 
@@ -310,66 +314,6 @@ export interface ReceiveMessage {
   method: string
   label: string
   data?: any
-}
-
-/**RPC定义辅助类型 */
-export type RPCSchema<
-  T extends {
-    requests?: Record<string, (...args: any[]) => any>
-    messages?: Record<string, any>
-  }
-> = {
-  [K in keyof T]: K extends 'messages'
-    ? {
-        [K2 in keyof T[K]]: (data: T[K][K2]) => void
-      }
-    : {
-        [K2 in keyof T[K]]: T[K][K2] extends (...args: infer A) => infer R
-          ? (...args: A) => Promise<R> | R
-          : never
-      }
-}
-
-/** RPC 接口定义 — 分别定义 host 端和 webview 端的方法 */
-export interface RPCInterface {
-  host?: {
-    /** 请求方法（request-response，webview 调用 host） */
-    requests?: Record<string, (...args: any[]) => any>
-    /** 消息（fire-and-forget，双向） */
-    messages?: Record<string, (...args: any[]) => void>
-  }
-  webview?: {
-    /** 请求方法（request-response，host 调用 webview） */
-    requests?: Record<string, (...args: any[]) => any>
-    /** 消息（fire-and-forget，双向） */
-    messages?: Record<string, (...args: any[]) => void>
-  }
-}
-
-/** Window.rpc 方法类型转换 */
-export type RPCPromise<T, K extends PropertyKey> = T extends object
-  ? K extends keyof T
-    ? T[K] extends object
-      ? K extends 'messages'
-        ? {
-            [K2 in keyof T[K]]: T[K][K2] extends (...args: infer A) => any ? (...args: A) => void : never
-          }
-        : {
-            [K2 in keyof T[K]]: T[K][K2] extends (...args: infer A) => infer R
-              ? (...args: A) => Promise<Awaited<R>>
-              : never
-          }
-      : {}
-    : {}
-  : {}
-
-/**defineRPC参数类型 */
-export type DefineRPCConfig<T> = Omit<T, 'messages'> & {
-  messages?: 'messages' extends keyof T
-    ? T['messages'] extends object
-      ? { [K in keyof T['messages']]?: T['messages'][K] }
-      : T['messages']
-    : never
 }
 
 /** Host 端 RPC 实例（由 BrowserWindow 创建，通过 win.rpc 访问） */

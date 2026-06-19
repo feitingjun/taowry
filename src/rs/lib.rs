@@ -5,16 +5,20 @@ pub mod application;
 pub mod channel;
 pub mod dock;
 pub mod event;
+pub mod menu_manager;
 pub mod napi_api;
 pub mod protocol;
 pub mod rpc;
+pub mod tray_events;
 pub mod window;
+pub mod window_builder;
 
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{
     ErrorStrategy, ThreadSafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
 };
 use napi::JsFunction;
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tao::event::{Event, StartCause};
@@ -31,42 +35,45 @@ use tray_icon::{menu::MenuEvent, TrayIconEvent};
 /// 退出标志
 pub(crate) static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-/// 主线程状态：仅从 JS 主线程访问，无并发竞争。
-/// 使用 static mut 因为 EventLoop 是 !Send/!Sync，必须留在主线程。
-static mut MAIN: Option<MainState> = None;
+// 主线程状态：仅从 JS 主线程访问，无并发竞争。
+// 使用 thread_local! + RefCell 替代 static mut，提供运行时借用检查。
+// EventLoop 是 !Send/!Sync，必须留在主线程。
+thread_local! {
+    static MAIN: RefCell<Option<MainState>> = const { RefCell::new(None) };
+}
 
 struct MainState {
     app: Application,
     event_loop: tao::event_loop::EventLoop<Action>,
 }
 
-// ===== 全局状态访问器（仅在主线程调用，安全）=====
+// ===== 全局状态访问器（仅在主线程调用，通过 RefCell 保证安全）=====
 
 pub(crate) fn with_app<F, R>(f: F) -> Result<R>
 where
     F: FnOnce(&mut Application) -> Result<R>,
 {
-    #[allow(static_mut_refs)]
-    unsafe {
-        match MAIN.as_mut() {
-            Some(state) => f(&mut state.app),
-            None => Err(Error::from_reason("Application not initialized")),
-        }
-    }
+    MAIN.with_borrow_mut(|opt| {
+        let state = opt
+            .as_mut()
+            .ok_or_else(|| Error::from_reason("Application not initialized"))?;
+        f(&mut state.app)
+    })
 }
 
 pub(crate) fn with_app_el<F, R>(f: F) -> Result<R>
 where
     F: FnOnce(&mut Application, &tao::event_loop::EventLoopWindowTarget<Action>) -> Result<R>,
 {
-    #[allow(static_mut_refs)]
-    unsafe {
-        let state = MAIN
+    MAIN.with_borrow_mut(|opt| {
+        let state = opt
             .as_mut()
             .ok_or_else(|| Error::from_reason("Application not initialized"))?;
-        let target: &tao::event_loop::EventLoopWindowTarget<Action> = &state.event_loop;
-        f(&mut state.app, target)
-    }
+        // Split borrow: app mutably, event_loop shared (via Deref to EventLoopWindowTarget)
+        let app = &mut state.app;
+        let target = &*state.event_loop;
+        f(app, target)
+    })
 }
 
 // ===== napi 导出函数 =====
@@ -86,9 +93,7 @@ fn start(env: Env, callback: JsFunction) -> Result<()> {
 
     install_tray_menu_handlers(proxy.clone());
 
-    unsafe {
-        MAIN = Some(MainState { app, event_loop });
-    }
+    MAIN.set(Some(MainState { app, event_loop }));
 
     QUIT_REQUESTED.store(false, Ordering::Relaxed);
 
@@ -98,9 +103,8 @@ fn start(env: Env, callback: JsFunction) -> Result<()> {
             if QUIT_REQUESTED.load(Ordering::Relaxed) {
                 return Ok::<Vec<napi::JsUndefined>, napi::Error>(vec![]);
             }
-            #[allow(static_mut_refs)]
-            unsafe {
-                if let Some(state) = MAIN.as_mut() {
+            MAIN.with(|cell| {
+                if let Some(state) = cell.borrow_mut().as_mut() {
                     let el = &mut state.event_loop;
                     let app = &mut state.app;
                     let start_time = Instant::now();
@@ -140,8 +144,15 @@ fn start(env: Env, callback: JsFunction) -> Result<()> {
                     // ── Phase B (macOS): 排空 NSApp 事件 + CFRunLoop 源 ──
                     #[cfg(target_os = "macos")]
                     drain_macos_events();
+
+                    // ── Phase C: 清理超时的 RPC 请求 ──
+                    for window in app.windows.values() {
+                        if let Ok(mut rpc) = window.rpc_state.lock() {
+                            rpc.drain_timeouts(Duration::from_secs(30));
+                        }
+                    }
                 }
-            }
+            });
             Ok::<Vec<napi::JsUndefined>, napi::Error>(vec![])
         })?;
 

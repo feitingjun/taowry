@@ -38,4 +38,9 @@ impl ProtocolState {
     pub fn remove(&mut self, id: &str) -> Option<RequestAsyncResponder> {
         self.pending.remove(id)
     }
+
+    /// 清理所有待处理的协议请求（窗口关闭时调用）
+    pub fn clear(&mut self) {
+        self.pending.clear();
+    }
 }

@@ -80,9 +80,13 @@ export class Tray {
     return parseOrNull(native.trayRect(this.label))
   }
 
-  /** 移除托盘图标 */
+  /** 移除托盘图标，同时清理事件监听器 */
   remove(): void {
     native.removeTray(this.label)
+    const current = getCurrentApplication()
+    if (current) {
+      current._cleanupListeners(`tray:${this.label}`)
+    }
   }
 }
 

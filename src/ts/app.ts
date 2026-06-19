@@ -12,11 +12,11 @@ import type {
 import type BrowserWindow from './window'
 import { Menu } from './menu.js'
 import { native, json, parse, initNative } from './native-module.js'
+import { EventBus, type Listener } from './event-bus.js'
 
 /** 用于存储全局唯一的 Application 实例 */
 const CURRENT_APP_KEY = '__taowryApp'
 
-type Listener = (data?: any) => void
 
 /** 获取当前 Application 实例 */
 export const getCurrentApplication = (): Application | undefined => {
@@ -28,7 +28,7 @@ export const getCurrentApplication = (): Application | undefined => {
  * 构造函数即启动 Rust 事件循环，无需调用 run()
  */
 export default class Application {
-  private listeners: Record<string, Record<string, Listener[]>> = {}
+  private bus = new EventBus()
   private windows: Record<string, BrowserWindow> = {}
   private _protocol?: ProtocolHandler
   private _assetsDir?: string
@@ -155,9 +155,15 @@ export default class Application {
     this.windows[window.label] = window as any
   }
 
-  /** @internal 注销窗口实例 */
+  /** @internal 注销窗口实例，同时清理关联的事件监听器 */
   _unregisterWindow(label: string) {
     delete this.windows[label]
+    this.bus.removeNamespace(label)
+  }
+
+  /** @internal 清理指定标签的所有事件监听器（用于托盘等非窗口实体） */
+  _cleanupListeners(label: string) {
+    this.bus.removeNamespace(label)
   }
 
   // ===== RPC =====
@@ -202,46 +208,28 @@ export default class Application {
   on(label: string, event: string, callback: Listener): () => void
   on(labelOrEvent: string, eventOrCallback: string | Listener, callback?: Listener): () => void {
     if (typeof eventOrCallback === 'function') {
-      return this.addListener('app', labelOrEvent, eventOrCallback)
+      return this.bus.on('app', labelOrEvent, eventOrCallback)
     }
-    return this.addListener(labelOrEvent, eventOrCallback, callback as Listener)
+    return this.bus.on(labelOrEvent, eventOrCallback, callback as Listener)
   }
 
   once<T extends keyof AppEvent>(event: T, callback: (data: AppEvent[T]) => void): () => void
   once(label: string, event: string, callback: Listener): () => void
   once(labelOrEvent: string, eventOrCallback: string | Listener, callback?: Listener): () => void {
     if (typeof eventOrCallback === 'function') {
-      return this.addOnceListener('app', labelOrEvent, eventOrCallback)
+      return this.bus.once('app', labelOrEvent, eventOrCallback)
     }
-    return this.addOnceListener(labelOrEvent, eventOrCallback, callback as Listener)
+    return this.bus.once(labelOrEvent, eventOrCallback, callback as Listener)
   }
 
   /** @internal 移除事件监听 */
   _off(label: string, event: string, callback: Listener) {
-    const listeners = this.listeners[label]?.[event]
-    if (!listeners) return
-    this.listeners[label][event] = listeners.filter(item => item !== callback)
+    this.bus.off(label, event, callback)
   }
 
   /** @internal 触发事件 */
   _emit(label: string, event: string, data: any) {
-    const listeners = this.listeners[label]?.[event] ?? []
-    listeners.slice().forEach(callback => callback(data))
-  }
-
-  private addListener(label: string, event: string, callback: Listener) {
-    if (!this.listeners[label]) this.listeners[label] = {}
-    if (!this.listeners[label][event]) this.listeners[label][event] = []
-    this.listeners[label][event].push(callback)
-    return () => this._off(label, event, callback)
-  }
-
-  private addOnceListener(label: string, event: string, callback: Listener) {
-    const wrapper: Listener = data => {
-      callback(data)
-      this._off(label, event, wrapper)
-    }
-    return this.addListener(label, event, wrapper)
+    this.bus.emit(label, event, data)
   }
 
   // ===== 事件处理 =====

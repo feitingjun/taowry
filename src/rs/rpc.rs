@@ -6,6 +6,7 @@
 
 use serde_json::Value;
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 /// RPC 消息类型
 pub enum RpcMessageType {
@@ -59,8 +60,8 @@ pub type RpcCallback = Box<dyn FnOnce(Result<serde_json::Value, String>) + Send>
 /// Rust 为该方向分配 rpc_id，并在 WebView 响应前持有对应的回调。
 pub struct RpcState {
     host_request_counter: u64,
-    /// rpc_id → 回调映射（Host→WebView 请求追踪）
-    pending_host_requests: HashMap<u64, RpcCallback>,
+    /// rpc_id → (回调, 创建时间) 映射（Host→WebView 请求追踪）
+    pending_host_requests: HashMap<u64, (RpcCallback, Instant)>,
 }
 
 impl Default for RpcState {
@@ -86,19 +87,57 @@ impl RpcState {
         self.host_request_counter += 1;
         let rpc_id = self.host_request_counter;
         self.pending_host_requests
-            .insert(rpc_id, Box::new(callback));
+            .insert(rpc_id, (Box::new(callback), Instant::now()));
         rpc_id
     }
 
     /// WebView 响应后，移除映射并返回回调。
     pub fn resolve_host_request(&mut self, rpc_id: u64) -> Option<RpcCallback> {
-        self.pending_host_requests.remove(&rpc_id)
+        self.pending_host_requests.remove(&rpc_id).map(|(cb, _)| cb)
+    }
+
+    /// 清理所有待处理的请求（窗口关闭时调用），每个请求以 "window closed" 错误 reject。
+    pub fn clear(&mut self) {
+        for (_, (callback, _)) in self.pending_host_requests.drain() {
+            callback(Err("window closed".to_string()));
+        }
+    }
+
+    /// 清理超时的请求（超过 `max_age` 的请求），每个以 "rpc timeout" 错误 reject。
+    /// 返回被清理的请求数量。
+    pub fn drain_timeouts(&mut self, max_age: Duration) -> usize {
+        let now = Instant::now();
+        let timed_out: Vec<u64> = self
+            .pending_host_requests
+            .iter()
+            .filter(|(_, (_, created))| now.duration_since(*created) > max_age)
+            .map(|(id, _)| *id)
+            .collect();
+        let count = timed_out.len();
+        for id in timed_out {
+            if let Some((callback, _)) = self.pending_host_requests.remove(&id) {
+                callback(Err("rpc timeout".to_string()));
+            }
+        }
+        count
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
+    fn make_called_flag() -> (Arc<AtomicBool>, impl FnOnce(Result<Value, String>)) {
+        let flag = Arc::new(AtomicBool::new(false));
+        let f = flag.clone();
+        (flag, move |_| {
+            f.store(true, Ordering::Relaxed);
+        })
+    }
 
     #[test]
     fn test_parse_request() {
@@ -145,35 +184,55 @@ mod tests {
 
     #[test]
     fn test_rpc_state_host_requests() {
-        use std::sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc,
-        };
-        let state = RpcState::new();
-        // 使用 RefCell 在单线程测试中允许可变借用
-        let mut state = state;
-        let called1 = Arc::new(AtomicBool::new(false));
-        let called2 = Arc::new(AtomicBool::new(false));
-        let c1 = called1.clone();
-        let c2 = called2.clone();
-        let id1 = state.assign_host_request_id(move |_| {
-            c1.store(true, Ordering::Relaxed);
-        });
-        let id2 = state.assign_host_request_id(move |_| {
-            c2.store(true, Ordering::Relaxed);
-        });
+        let mut state = RpcState::new();
+        let (flag1, cb1) = make_called_flag();
+        let (flag2, cb2) = make_called_flag();
+        let id1 = state.assign_host_request_id(cb1);
+        let id2 = state.assign_host_request_id(cb2);
         assert_eq!(id1, 1);
         assert_eq!(id2, 2);
 
         let cb = state.resolve_host_request(id1);
         assert!(cb.is_some());
-        cb.unwrap()(Ok(serde_json::Value::Null));
-        assert!(called1.load(Ordering::Relaxed));
+        cb.unwrap()(Ok(Value::Null));
+        assert!(flag1.load(Ordering::Relaxed));
         // 第二次 resolve 同一 ID 应返回 None
         assert!(state.resolve_host_request(id1).is_none());
         let cb2 = state.resolve_host_request(id2);
         assert!(cb2.is_some());
-        cb2.unwrap()(Ok(serde_json::Value::Null));
-        assert!(called2.load(Ordering::Relaxed));
+        cb2.unwrap()(Ok(Value::Null));
+        assert!(flag2.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_rpc_state_clear() {
+        let mut state = RpcState::new();
+        let (flag, cb) = make_called_flag();
+        let _id = state.assign_host_request_id(cb);
+        state.clear();
+        // clear() 会以 Err("window closed") 调用回调
+        assert!(flag.load(Ordering::Relaxed));
+        // clear 后 pending 应为空
+        assert_eq!(state.drain_timeouts(Duration::from_secs(0)), 0);
+    }
+
+    #[test]
+    fn test_rpc_state_drain_timeouts() {
+        let mut state = RpcState::new();
+        let (flag, cb) = make_called_flag();
+        let _id = state.assign_host_request_id(cb);
+        // 0 秒超时应立即清理
+        assert_eq!(state.drain_timeouts(Duration::from_secs(0)), 1);
+        assert!(flag.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_rpc_state_not_timeout_early() {
+        let mut state = RpcState::new();
+        let (flag, cb) = make_called_flag();
+        let _id = state.assign_host_request_id(cb);
+        // 使用很大的超时时间，请求不应该超时
+        assert_eq!(state.drain_timeouts(Duration::from_secs(3600)), 0);
+        assert!(!flag.load(Ordering::Relaxed));
     }
 }

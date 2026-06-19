@@ -25,7 +25,7 @@ export class Menu {
 }
 
 /** 标准化菜单项，确保每个菜单项都有 id 和正确的 type */
-function normalizeMenuItem(item: MenuItemOptions, fallbackId: string): MenuItemOptions {
+export function normalizeMenuItem(item: MenuItemOptions, fallbackId: string): MenuItemOptions {
   const id = item.id ?? fallbackId
   const normalized: MenuItemOptions = { ...item, id }
   if (item.items) {
