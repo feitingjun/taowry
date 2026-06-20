@@ -20,7 +20,7 @@
     "url": "git+https://github.com/feitingjun/taowry.git"
   },
   "scripts": {
-    "build:ts": "tsc",
+    "build:ts": "tsc -p tsconfig.build.json",
     "build:dev": "napi build --platform --release && mv index.darwin-arm64.node src/taowry.node",
     "build:all": "./build.sh",
     "test": "bun test src/ts/__tests__/",
