@@ -12,6 +12,7 @@ export interface NativeModule {
   quit: () => void
 
   // ===== 应用级 =====
+  setAppName: (name: string) => void
   windowLabels: () => string
   webviewVersion: () => string
   createWindow: (label: string, data: string) => string
@@ -137,6 +138,17 @@ export interface NativeModule {
   primaryMonitor: () => string
   getMonitorList: () => string
   monitorFromPoint: (data: string) => string
+
+  // ===== Utils =====
+  utilsNotify: (data: string) => void
+  utilsOpenFile: (path: string) => void
+  utilsOpenUrl: (url: string) => void
+  utilsPickFile: (data: string, callback: (result: string) => void) => void
+  utilsPickFiles: (data: string, callback: (result: string) => void) => void
+  utilsPickFolder: (data: string, callback: (result: string) => void) => void
+  utilsSaveFile: (data: string, callback: (result: string) => void) => void
+  utilsShowMessage: (data: string, callback: (result: string) => void) => void
+  utilsGetDir: (name: string) => string
 }
 
 // ===== Native 模块懒加载 =====

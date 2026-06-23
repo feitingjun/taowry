@@ -23,6 +23,17 @@ https://github.com/feitingjun/taowry
   - [光标](#光标)
 - [Tray](#tray)
 - [Menu 菜单配置](#menu-菜单配置)
+- [Utils 工具类](#utils-工具类)
+  - [系统通知](#系统通知)
+  - [打开文件与 URL](#打开文件与-url)
+  - [文件对话框](#文件对话框)
+  - [消息对话框](#消息对话框)
+  - [OS 目录](#os-目录)
+  - [应用范围目录](#应用范围目录)
+- [WebView 端 API（taowry/client）](#webview-端-apitaowryclient)
+  - [getCurrentWindow](#getcurrentwindow)
+  - [getUtils](#getutils)
+  - [defineRPC](#definerpc-client)
 - [getWindow](#getwindow)
 - [defineRPC](#definerpc)
 - [BrowserWindowAttributes](#browserwindowattributes)
@@ -80,10 +91,18 @@ console.log(win.title())
 ```typescript
 import { Application } from 'taowry'
 
-const app = new Application()
+const app = new Application({
+  assets: './dist',         // assets:// 静态资源目录
+  appName: 'MyApp',         // 应用名称（可选，用于应用范围目录）
+  protocol: async (req) => { // views:// 动态协议（可选）
+    return new Response('Hello')
+  }
+})
 ```
 
 > 同一时间只能存在一个 Application 实例，重复创建会抛出错误。
+>
+> `appName` 用于 `Utils.getDataDir()` 等应用范围目录 API。未设置时调用这些 API 会抛出异常。
 
 ### ready
 
@@ -573,15 +592,15 @@ win.setMaxSize(1920, 1080)
 | `setMaximizable(bool)` / `isMaximizable()` | 设置/获取可最大化 | `void` / `boolean` |
 | `setClosable(bool)` / `isClosable()` | 设置/获取可关闭 | `void` / `boolean` |
 | `setEnabledButtons(buttons)` / `enabledButtons()` | 设置/获取控制按钮 | `void` / `WindowButton[]` |
-| `minimized()` / `unminimized()` / `isMinimized()` | 最小化操作 | `void` / `boolean` |
-| `maximized()` / `unmaximized()` / `isMaximized()` | 最大化操作 | `void` / `boolean` |
+| `minimize()` / `unminimize()` / `isMinimized()` | 最小化操作 | `void` / `boolean` |
+| `maximize()` / `unmaximize()` / `isMaximized()` | 最大化操作 | `void` / `boolean` |
 
 ```typescript
 win.setTitle('新标题')
 const title = win.title()
 win.setEnabledButtons(['close', 'minimize'])
-win.minimized()
-win.unminimized()
+win.minimize()
+win.unminimize()
 ```
 
 ### 菜单
@@ -778,6 +797,218 @@ await app.setApplicationMenu([
 
 ---
 
+## Utils 工具类
+
+系统工具类，提供文件对话框、系统通知、消息弹窗、打开文件/URL、OS 目录访问等功能。所有方法均为静态方法。
+
+```typescript
+import { Utils } from 'taowry'
+```
+
+### 系统通知
+
+```typescript
+Utils.notify('标题', '内容')
+```
+
+### 打开文件与 URL
+
+```typescript
+// 用默认程序打开文件或文件夹
+Utils.openFile('/path/to/file.pdf')
+
+// 用默认浏览器打开 URL
+Utils.openUrl('https://example.com')
+```
+
+### 文件对话框
+
+```typescript
+// 选择单个文件
+const file = await Utils.pickFile({
+  filters: [{ name: 'Images', extensions: ['png', 'jpg', 'gif'] }],
+  directory: '/Users/me/Documents'
+})
+// => "/Users/me/Documents/photo.png" 或 null
+
+// 选择多个文件
+const files = await Utils.pickFiles({ filters: [{ name: 'All', extensions: ['*'] }] })
+// => ["/path/a.txt", "/path/b.txt"] 或 []
+
+// 选择文件夹
+const folder = await Utils.pickFolder()
+// => "/path/to/folder" 或 null
+
+// 保存文件对话框
+const savePath = await Utils.saveFile({
+  fileName: 'untitled.txt',
+  filters: [{ name: 'Text', extensions: ['txt'] }]
+})
+// => "/path/to/untitled.txt" 或 null
+```
+
+### 消息对话框
+
+```typescript
+// 确认对话框
+const ok = await Utils.showMessage({
+  title: '确认',
+  body: '删除此项目？',
+  level: 'warning',
+  buttons: 'yesNo'
+})
+// => true (Yes) 或 false (No)
+
+// 自定义按钮
+const choice = await Utils.showMessage({
+  title: '保存',
+  body: '是否保存更改？',
+  buttons: ['保存', '不保存', '取消']
+})
+// => "保存" | "不保存" | "取消"
+```
+
+`buttons` 可选值：`'ok'`、`'okCancel'`、`'yesNo'`、`'yesNoCancel'`、`string[]`（自定义）
+
+`level` 可选值：`'info'`、`'warning'`、`'error'`
+
+### OS 目录
+
+| 方法 | 说明 | macOS 示例 |
+|------|------|-------------|
+| `getDesktopDir()` | 桌面 | `~/Desktop` |
+| `getDocumentsDir()` | 文档 | `~/Documents` |
+| `getDownloadsDir()` | 下载 | `~/Downloads` |
+| `getPicturesDir()` | 图片 | `~/Pictures` |
+| `getMusicDir()` | 音乐 | `~/Music` |
+| `getVideosDir()` | 视频 | `~/Movies` |
+| `getHomeDir()` | 用户主目录 | `~` |
+| `getTempDir()` | 临时目录 | `/tmp` |
+
+返回值均为 `string | null`。
+
+### 应用范围目录
+
+需要先在 `new Application({ appName: 'MyApp' })` 中设置应用名称，否则调用时抛出异常。
+
+| 方法 | 说明 | macOS 示例 |
+|------|------|-------------|
+| `getDataDir()` | 应用数据 | `~/Library/Application Support/MyApp` |
+| `getConfigDir()` | 应用配置 | `~/Library/Preferences/MyApp` |
+| `getCacheDir()` | 应用缓存 | `~/Library/Caches/MyApp` |
+| `getLogDir()` | 应用日志 | `~/Library/Logs/MyApp` |
+
+```typescript
+const app = new Application({ appName: 'MyApp' })
+
+Utils.getDataDir()    // ~/Library/Application Support/MyApp
+Utils.getCacheDir()   // ~/Library/Caches/MyApp
+```
+
+---
+
+## WebView 端 API（taowry/client）
+
+WebView 端通过 `taowry/client` 子路径导入，提供直接控制当前窗口和调用工具功能，无需经过 RPC 中转，由 Rust 端直接执行。
+
+```typescript
+import { getCurrentWindow, getUtils, defineRPC } from 'taowry/client'
+```
+
+### getCurrentWindow
+
+获取当前窗口控制实例，直接操作当前 WebView 所在的窗口。
+
+```typescript
+import { getCurrentWindow } from 'taowry/client'
+
+const win = getCurrentWindow()
+
+// 窗口操作
+win.close()
+win.setTitle('新标题')
+win.setSize(1024, 768)
+win.setPosition(100, 100)
+win.minimize()
+win.maximize()
+win.fullscreen()
+win.focus()
+
+// 无边框窗口拖拽
+document.querySelector('.titlebar')?.addEventListener('mousedown', () => {
+  win.dragWindow()
+})
+
+// 异步获取窗口状态
+const maximized = await win.isMaximized()
+const { width, height } = await win.size()
+const { x, y } = await win.position()
+const title = await win.title()
+```
+
+**可用方法**：
+
+| 类别 | 方法 |
+|------|------|
+| 操作 | `close()`, `minimize()`, `unminimize()`, `maximize()`, `unmaximize()`, `focus()` |
+| 设置 | `setVisible(bool)`, `setTitle(str)`, `setSize(w,h)`, `setPosition(x,y)` |
+| 设置 | `setResizable(bool)`, `setAlwaysOnTop(bool)`, `setDecorations(bool)` |
+| 全屏 | `fullscreen()`, `unfullscreen()` |
+| 开发者 | `openDevtools()`, `closeDevtools()` |
+| 拖拽 | `dragWindow()`, `dragResizeWindow(direction)` |
+| 其他 | `setUrl(url)`, `print()` |
+| 查询 | `isMinimized()`, `isMaximized()`, `isFullscreen()`, `isVisible()`, `hasFocus()` |
+| 查询 | `size()`, `outerSize()`, `position()`, `outerPosition()`, `title()`, `url()`, `scaleFactor()` |
+
+> 操作类方法同步调用（fire-and-forget），查询类方法返回 Promise。
+
+### getUtils
+
+获取工具接口实例，在 WebView 中直接使用文件对话框、通知等功能。
+
+```typescript
+import { getUtils } from 'taowry/client'
+
+const utils = getUtils()
+
+// 发送通知
+utils.notify('Hello', 'World')
+
+// 选择文件
+const file = await utils.pickFile({
+  filters: [{ name: 'Images', extensions: ['png', 'jpg'] }]
+})
+
+// 打开 URL
+utils.openUrl('https://example.com')
+
+// 消息对话框
+const confirmed = await utils.showMessage({
+  title: '确认',
+  body: '删除此项目？',
+  level: 'warning',
+  buttons: 'yesNo'
+})
+
+// 获取目录
+const desktop = await utils.getDesktopDir()
+const dataDir = await utils.getDataDir()  // 需先设置 appName
+```
+
+> 方法与 Node 端 `Utils` 类完全一致，区别在于所有方法均返回 Promise（因为是异步 IPC 通信）。
+
+### defineRPC (client)
+
+WebView 端创建类型安全的 RPC 实例，详见 [RPC 通信](#rpc-通信)。
+
+```typescript
+import { defineRPC, RPCInterface } from 'taowry/client'
+
+const rpc = defineRPC<MyRPC>({ ... })
+```
+
+---
+
 ## getWindow
 
 通过标签名获取已创建的窗口实例。
@@ -961,6 +1192,7 @@ interface ProtocolHandler {
 interface ApplicationOptions {
   protocol?: ProtocolHandler   // views:// 动态协议 handler
   assets?: string              // assets:// 静态资源目录
+  appName?: string             // 应用名称（用于 Utils 应用范围目录，未设置时调用相关 API 抛出异常）
 }
 
 interface TrayIconOptions {

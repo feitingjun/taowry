@@ -97,6 +97,14 @@ export interface ApplicationOptions {
   protocol?: ProtocolHandler
   /** assets:// 静态资源目录，Rust 直接从文件系统加载 */
   assets?: string
+  /**
+   * 应用名称（可选）
+   *
+   * 用于应用范围目录（`Utils.getDataDir()` 等），
+   * 如 macOS 下的 `~/Library/Application Support/<appName>`。
+   * 未设置时调用相关 API 会抛出异常。
+   */
+  appName?: string
 }
 
 /** 窗口尺寸约束 */

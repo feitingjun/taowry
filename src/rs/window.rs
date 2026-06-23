@@ -15,7 +15,7 @@ use tao::window::{
 use wry::{Rect, WebView};
 
 use crate::protocol::ProtocolState;
-use crate::rpc::RpcState;
+use crate::rpc::{RpcState, WinCommandQueue};
 
 /// 浏览器窗口，包含 tao 窗口和 wry WebView 的绑定
 pub struct BrowserWindow {
@@ -25,6 +25,8 @@ pub struct BrowserWindow {
     id: WindowId,
     pub rpc_state: Arc<Mutex<RpcState>>,
     pub protocol_state: Arc<Mutex<ProtocolState>>,
+    /// 前端直接窗口控制命令队列（IPC handler push，事件泵 drain）
+    pub cmd_queue: WinCommandQueue,
 }
 
 impl BrowserWindow {
@@ -35,6 +37,7 @@ impl BrowserWindow {
         id: WindowId,
         rpc_state: Arc<Mutex<RpcState>>,
         protocol_state: Arc<Mutex<ProtocolState>>,
+        cmd_queue: WinCommandQueue,
     ) -> Self {
         Self {
             label,
@@ -43,6 +46,7 @@ impl BrowserWindow {
             id,
             rpc_state,
             protocol_state,
+            cmd_queue,
         }
     }
 

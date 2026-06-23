@@ -32,6 +32,7 @@ export default class Application {
   private windows: Record<string, BrowserWindow> = {}
   private _protocol?: ProtocolHandler
   private _assetsDir?: string
+  private _appName?: string
   private _ready = false
 
   constructor(options: ApplicationOptions = {}) {
@@ -46,9 +47,17 @@ export default class Application {
     if (options.assets) {
       this._assetsDir = options.assets
     }
+    if (options.appName) {
+      this._appName = options.appName
+    }
 
     // 初始化 native 模块
     initNative()
+
+    // 传递应用名称到 Rust（用于应用范围目录）
+    if (this._appName) {
+      native.setAppName(this._appName)
+    }
 
     // 立即启动 Rust 事件循环
     native.start((raw: string) => {

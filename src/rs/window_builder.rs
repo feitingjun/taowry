@@ -14,7 +14,7 @@ use wry::{DragDropEvent, NewWindowResponse, PageLoadEvent, WebViewBuilder};
 use crate::application::{Action, Application};
 use crate::channel;
 use crate::protocol::ProtocolState;
-use crate::rpc::{parse_ipc_message, RpcMessageType, RpcState};
+use crate::rpc::{parse_ipc_message, parse_win_command, RpcMessageType, RpcState, WinCommandQueue};
 use crate::window::load_tao_icon_base64;
 
 
@@ -25,6 +25,7 @@ pub fn apply_webview_options<'a>(
     data: &Value,
     rpc_state: Arc<Mutex<RpcState>>,
     protocol_state: Arc<Mutex<ProtocolState>>,
+    win_cmd_queue: WinCommandQueue,
 ) -> Result<WebViewBuilder<'a>, String> {
     if let Some(url) = data.get("url").and_then(Value::as_str) {
         if let Some(headers) = data.get("headers") {
@@ -78,6 +79,7 @@ pub fn apply_webview_options<'a>(
 
     let ipc_label = label.clone();
     let ipc_rpc_state = rpc_state.clone();
+    let ipc_cmd_queue = win_cmd_queue.clone();
     builder = builder.with_ipc_handler(move |request| {
     let body = request.body().clone();
     let uri = request.uri().to_string();
@@ -112,6 +114,16 @@ pub fn apply_webview_options<'a>(
             "rpcMessage",
             json!({ "event": rpc_msg.event, "data": rpc_msg.data }),
           );
+        }
+        RpcMessageType::WinControl => {
+          // 前端直接窗口控制：解析命令并推入队列，不转发给 Node.js
+          if let Some(method) = &rpc_msg.method {
+            if let Some(cmd) = parse_win_command(method, &rpc_msg.data, rpc_msg.id) {
+              if let Ok(mut queue) = ipc_cmd_queue.lock() {
+                queue.push(cmd);
+              }
+            }
+          }
         }
       }
     } else {

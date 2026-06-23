@@ -18,10 +18,16 @@ tao = "0.30.2"
 tray-icon = "0.16.0"
 uuid = { version = "1", features = ["v4"] }
 wry = { version = "0.55.1", features = ["devtools"] }
+rfd = "0.15"
+open = "5"
+dirs = "6"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSString", "NSDate"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+notify-rust = "4"
 
 [build-dependencies]
 napi-build = "2"

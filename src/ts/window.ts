@@ -31,7 +31,23 @@ const RPC_BRIDGE_SCRIPT = `
   var rpcHandlers = {};
   var messageHandlers = {};
 
-  window.__taowry = {
+  function postWin(method, data, id) {
+    var msg = { type: "win", method: method };
+    if (data !== undefined) msg.data = data;
+    if (id !== undefined) msg.id = id;
+    window.ipc.postMessage(JSON.stringify(msg));
+  }
+
+  function winGetter(method) {
+    return new Promise(function(resolve, reject) {
+      var id = ++counter;
+      callbacks[id] = { resolve: resolve, reject: reject };
+      postWin(method, undefined, id);
+    });
+  }
+
+
+  var taowry = {
     defineRPC: function(config) {
       config = config || {};
       if (config.requests) {
@@ -121,8 +137,58 @@ const RPC_BRIDGE_SCRIPT = `
         var mh = messageHandlers[event] || [];
         mh.forEach(function(cb) { cb(data); });
       }, 0);
-    }
+    },
+    window: Object.freeze({
+      close: function() { postWin("close"); },
+      minimize: function() { postWin("minimize"); },
+      unminimize: function() { postWin("unminimize"); },
+      maximize: function() { postWin("maximize"); },
+      unmaximize: function() { postWin("unmaximize"); },
+      focus: function() { postWin("focus"); },
+      setVisible: function(v) { postWin("setVisible", v); },
+      setTitle: function(title) { postWin("setTitle", title); },
+      setSize: function(w, h) { postWin("setSize", { width: w, height: h }); },
+      setPosition: function(x, y) { postWin("setPosition", { x: x, y: y }); },
+      setResizable: function(v) { postWin("setResizable", v); },
+      setAlwaysOnTop: function(v) { postWin("setAlwaysOnTop", v); },
+      setDecorations: function(v) { postWin("setDecorations", v); },
+      fullscreen: function() { postWin("fullscreen"); },
+      unfullscreen: function() { postWin("unfullscreen"); },
+      openDevtools: function() { postWin("openDevtools"); },
+      closeDevtools: function() { postWin("closeDevtools"); },
+      dragWindow: function() { postWin("dragWindow"); },
+      dragResizeWindow: function(dir) { postWin("dragResizeWindow", dir); },
+      setUrl: function(url) { postWin("setUrl", url); },
+      print: function() { postWin("print"); },
+      isMinimized: function() { return winGetter("isMinimized"); },
+      isMaximized: function() { return winGetter("isMaximized"); },
+      isFullscreen: function() { return winGetter("isFullscreen"); },
+      isVisible: function() { return winGetter("isVisible"); },
+      isResizable: function() { return winGetter("isResizable"); },
+      isAlwaysOnTop: function() { return winGetter("isAlwaysOnTop"); },
+      isDecorated: function() { return winGetter("isDecorated"); },
+      hasFocus: function() { return winGetter("hasFocus"); },
+      isDevtoolsOpen: function() { return winGetter("isDevtoolsOpen"); },
+      size: function() { return winGetter("size"); },
+      outerSize: function() { return winGetter("outerSize"); },
+      position: function() { return winGetter("position"); },
+      outerPosition: function() { return winGetter("outerPosition"); },
+      title: function() { return winGetter("title"); },
+      url: function() { return winGetter("url"); },
+      scaleFactor: function() { return winGetter("scaleFactor"); }
+    }),
   };
+
+  // 冻结 __taowry 对象，防止第三方脚本篡改方法或属性
+  Object.freeze(taowry);
+
+  // 以不可写、不可配置的方式挂载到 window，防止被删除或替换
+  Object.defineProperty(window, "__taowry", {
+    value: taowry,
+    writable: false,
+    configurable: false,
+    enumerable: true
+  });
 })();
 `
 
@@ -552,11 +618,11 @@ export default class BrowserWindow<T extends RPCInterface = any> {
     return parse(native.windowEnabledButtons(this.label))
   }
   /** 最小化窗口 */
-  minimized(): void {
+  minimize(): void {
     native.windowSetMinimized(this.label, true)
   }
   /** 取消最小化 */
-  unminimized(): void {
+  unminimize(): void {
     native.windowSetMinimized(this.label, false)
   }
   /** 获取窗口是否最小化 */
@@ -564,11 +630,11 @@ export default class BrowserWindow<T extends RPCInterface = any> {
     return native.windowIsMinimized(this.label)
   }
   /** 最大化窗口 */
-  maximized(): void {
+  maximize(): void {
     native.windowSetMaximized(this.label, true)
   }
   /** 取消最大化 */
-  unmaximized(): void {
+  unmaximize(): void {
     native.windowSetMaximized(this.label, false)
   }
   /** 获取窗口是否最大化 */

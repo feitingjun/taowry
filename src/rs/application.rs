@@ -3,9 +3,12 @@
 //! 包含 Application 结构体和事件循环实现，
 //! 管理窗口、菜单、托盘的生命周期。
 
+use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction};
+
 use crate::channel;
 use crate::protocol::ProtocolState;
-use crate::rpc::RpcState;
+use crate::rpc::{RpcState, WinCommandQueue};
+use crate::utils::UtilCommand;
 use crate::window::{load_tray_icon_base64, load_tray_icon_from_bytes, BrowserWindow};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -24,6 +27,8 @@ use wry::{Rect, WebViewBuilder};
 pub enum Action {
     TrayIconEvent(TrayIconEvent),
     MenuEvent(MenuEvent),
+    /// 有待处理的对话框命令，事件泵应在 run_return 内同步执行
+    ProcessPendingDialogs,
 }
 
 /// 被管理的菜单类型（顶层菜单或子菜单）
@@ -39,6 +44,8 @@ pub struct Application {
     pub menu_items: HashMap<String, ManagedMenuItem>,
     pub trays: HashMap<String, TrayIcon>,
     pub proxy: Option<EventLoopProxy<Action>>,
+    /// Node 端待处理的对话框（命令 + 回调 TSFN），由事件泵在主线程执行
+    pub pending_node_dialogs: Vec<(UtilCommand, ThreadsafeFunction<String, ErrorStrategy::Fatal>)>,
     menu_counter: u64,
 }
 
@@ -56,6 +63,7 @@ impl Application {
             menu_items: HashMap::new(),
             trays: HashMap::new(),
             proxy: None,
+            pending_node_dialogs: Vec::new(),
             menu_counter: 0,
         }
     }
@@ -79,6 +87,7 @@ impl Application {
                 protocol.clear();
             }
         }
+        // 清理关联的 pending util futures
         self.windows.remove(label).is_some()
     }
 
@@ -118,12 +127,14 @@ impl Application {
         });
         let rpc_state = Arc::new(Mutex::new(RpcState::new()));
         let protocol_state = Arc::new(Mutex::new(ProtocolState::new()));
+        let cmd_queue: WinCommandQueue = Arc::new(Mutex::new(Vec::new()));
         webview_builder = apply_webview_options(
             label.clone(),
             webview_builder,
             data,
             rpc_state.clone(),
             protocol_state.clone(),
+            cmd_queue.clone(),
         )?;
 
         let webview = webview_builder
@@ -133,7 +144,7 @@ impl Application {
         let id_string = format!("{:?}", id);
         self.windows.insert(
             label.clone(),
-            BrowserWindow::new(label, window, webview, id, rpc_state, protocol_state),
+            BrowserWindow::new(label, window, webview, id, rpc_state, protocol_state, cmd_queue),
         );
         Ok(id_string)
     }

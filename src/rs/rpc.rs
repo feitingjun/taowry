@@ -6,6 +6,7 @@
 
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// RPC 消息类型
@@ -16,6 +17,8 @@ pub enum RpcMessageType {
     Response,
     /// WebView→Host 单向消息（fire-and-forget）
     Send,
+    /// WebView 直接窗口控制（Rust 端直接处理，不转发给 Node.js）
+    WinControl,
 }
 
 /// 解析后的 RPC 消息
@@ -38,6 +41,7 @@ pub fn parse_ipc_message(body: &str) -> Option<RpcMessage> {
         "req" => RpcMessageType::Request,
         "res" => RpcMessageType::Response,
         "msg" => RpcMessageType::Send,
+        "win" => RpcMessageType::WinControl,
         _ => return None,
     };
 
@@ -123,6 +127,121 @@ impl RpcState {
     }
 }
 
+// ===== 窗口控制命令队列 =====
+
+/// 窗口控制命令队列类型
+pub type WinCommandQueue = Arc<Mutex<Vec<WinCommand>>>;
+
+/// 前端直接窗口控制命令
+///
+/// 由 WebView IPC handler 解析并推入队列，事件泵每帧 drain 执行。
+/// setter 命令无 id（fire-and-forget），getter 命令携带 callback id 用于回传结果。
+pub enum WinCommand {
+    // ── Fire-and-forget ──
+    Close,
+    Minimize,
+    Unminimize,
+    Maximize,
+    Unmaximize,
+    Focus,
+    SetVisible(bool),
+    SetTitle(String),
+    SetSize { width: f64, height: f64 },
+    SetPosition { x: f64, y: f64 },
+    SetResizable(bool),
+    SetAlwaysOnTop(bool),
+    SetDecorations(bool),
+    Fullscreen,
+    Unfullscreen,
+    OpenDevtools,
+    CloseDevtools,
+    DragWindow,
+    DragResizeWindow(String),
+    SetUrl(String),
+    Print,
+
+    // ── Request-Response（携带 callback id）──
+    IsMinimized(u64),
+    IsMaximized(u64),
+    IsFullscreen(u64),
+    IsVisible(u64),
+    IsResizable(u64),
+    IsAlwaysOnTop(u64),
+    IsDecorated(u64),
+    HasFocus(u64),
+    IsDevtoolsOpen(u64),
+    GetSize(u64),
+    GetOuterSize(u64),
+    GetPosition(u64),
+    GetOuterPosition(u64),
+    GetTitle(u64),
+    GetUrl(u64),
+    GetScaleFactor(u64),
+}
+
+/// 解析窗口控制命令
+///
+/// 将 IPC 消息中的方法名和 JSON 数据转换为 `WinCommand` 变体。
+/// 返回 `None` 表示方法名无法识别。
+pub fn parse_win_command(method: &str, data: &Value, id: Option<u64>) -> Option<WinCommand> {
+    match method {
+        // Fire-and-forget
+        "close" => Some(WinCommand::Close),
+        "minimize" => Some(WinCommand::Minimize),
+        "unminimize" => Some(WinCommand::Unminimize),
+        "maximize" => Some(WinCommand::Maximize),
+        "unmaximize" => Some(WinCommand::Unmaximize),
+        "focus" => Some(WinCommand::Focus),
+        "setVisible" => Some(WinCommand::SetVisible(data.as_bool().unwrap_or(true))),
+        "setTitle" => Some(WinCommand::SetTitle(data.as_str().unwrap_or("").to_string())),
+        "setSize" => {
+            let obj = data.as_object()?;
+            let w = obj.get("width")?.as_f64()?;
+            let h = obj.get("height")?.as_f64()?;
+            Some(WinCommand::SetSize { width: w, height: h })
+        }
+        "setPosition" => {
+            let obj = data.as_object()?;
+            let x = obj.get("x")?.as_f64()?;
+            let y = obj.get("y")?.as_f64()?;
+            Some(WinCommand::SetPosition { x, y })
+        }
+        "setResizable" => Some(WinCommand::SetResizable(data.as_bool().unwrap_or(true))),
+        "setAlwaysOnTop" => Some(WinCommand::SetAlwaysOnTop(data.as_bool().unwrap_or(true))),
+        "setDecorations" => Some(WinCommand::SetDecorations(data.as_bool().unwrap_or(true))),
+        "fullscreen" => Some(WinCommand::Fullscreen),
+        "unfullscreen" => Some(WinCommand::Unfullscreen),
+        "openDevtools" => Some(WinCommand::OpenDevtools),
+        "closeDevtools" => Some(WinCommand::CloseDevtools),
+        "dragWindow" => Some(WinCommand::DragWindow),
+        "dragResizeWindow" => Some(WinCommand::DragResizeWindow(
+            data.as_str().unwrap_or("east").to_string(),
+        )),
+        "setUrl" => Some(WinCommand::SetUrl(data.as_str().unwrap_or("").to_string())),
+        "print" => Some(WinCommand::Print),
+
+        // Request-Response
+        "isMinimized" => Some(WinCommand::IsMinimized(id?)),
+        "isMaximized" => Some(WinCommand::IsMaximized(id?)),
+        "isFullscreen" => Some(WinCommand::IsFullscreen(id?)),
+        "isVisible" => Some(WinCommand::IsVisible(id?)),
+        "isResizable" => Some(WinCommand::IsResizable(id?)),
+        "isAlwaysOnTop" => Some(WinCommand::IsAlwaysOnTop(id?)),
+        "isDecorated" => Some(WinCommand::IsDecorated(id?)),
+        "hasFocus" => Some(WinCommand::HasFocus(id?)),
+        "isDevtoolsOpen" => Some(WinCommand::IsDevtoolsOpen(id?)),
+        "size" => Some(WinCommand::GetSize(id?)),
+        "outerSize" => Some(WinCommand::GetOuterSize(id?)),
+        "position" => Some(WinCommand::GetPosition(id?)),
+        "outerPosition" => Some(WinCommand::GetOuterPosition(id?)),
+        "title" => Some(WinCommand::GetTitle(id?)),
+        "url" => Some(WinCommand::GetUrl(id?)),
+        "scaleFactor" => Some(WinCommand::GetScaleFactor(id?)),
+
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,6 +299,76 @@ mod tests {
         assert!(parse_ipc_message(r#"{"foo":"bar"}"#).is_none());
         assert!(parse_ipc_message(r#"{"type":"unknown"}"#).is_none());
         assert!(parse_ipc_message("").is_none());
+    }
+
+    #[test]
+    fn test_parse_win_control() {
+        let body = r#"{"type":"win","method":"close"}"#;
+        let msg = parse_ipc_message(body).expect("should parse");
+        assert!(matches!(msg.msg_type, RpcMessageType::WinControl));
+        assert_eq!(msg.method.as_deref(), Some("close"));
+    }
+
+    #[test]
+    fn test_parse_win_control_with_data() {
+        let body = r#"{"type":"win","method":"setTitle","data":"hello"}"#;
+        let msg = parse_ipc_message(body).expect("should parse");
+        assert!(matches!(msg.msg_type, RpcMessageType::WinControl));
+        assert_eq!(msg.method.as_deref(), Some("setTitle"));
+        assert_eq!(msg.data.as_str(), Some("hello"));
+    }
+
+    #[test]
+    fn test_parse_win_control_with_id() {
+        let body = r#"{"type":"win","id":42,"method":"isMaximized"}"#;
+        let msg = parse_ipc_message(body).expect("should parse");
+        assert!(matches!(msg.msg_type, RpcMessageType::WinControl));
+        assert_eq!(msg.id, Some(42));
+        assert_eq!(msg.method.as_deref(), Some("isMaximized"));
+    }
+
+    #[test]
+    fn test_parse_win_command_setters() {
+        let cmd = parse_win_command("close", &Value::Null, None);
+        assert!(matches!(cmd, Some(WinCommand::Close)));
+
+        let cmd = parse_win_command("minimize", &Value::Null, None);
+        assert!(matches!(cmd, Some(WinCommand::Minimize)));
+
+        let cmd = parse_win_command("unminimize", &Value::Null, None);
+        assert!(matches!(cmd, Some(WinCommand::Unminimize)));
+
+        let cmd = parse_win_command("maximize", &Value::Null, None);
+        assert!(matches!(cmd, Some(WinCommand::Maximize)));
+
+        let cmd = parse_win_command("unmaximize", &Value::Null, None);
+        assert!(matches!(cmd, Some(WinCommand::Unmaximize)));
+
+        let cmd = parse_win_command("setTitle", &Value::String("hi".into()), None);
+        assert!(matches!(cmd, Some(WinCommand::SetTitle(s)) if s == "hi"));
+
+        let data = serde_json::json!({"width": 800.0, "height": 600.0});
+        let cmd = parse_win_command("setSize", &data, None);
+        assert!(matches!(cmd, Some(WinCommand::SetSize { width, height }) if width == 800.0 && height == 600.0));
+    }
+
+    #[test]
+    fn test_parse_win_command_getters() {
+        let cmd = parse_win_command("isMaximized", &Value::Null, Some(7));
+        assert!(matches!(cmd, Some(WinCommand::IsMaximized(7))));
+
+        let cmd = parse_win_command("size", &Value::Null, Some(10));
+        assert!(matches!(cmd, Some(WinCommand::GetSize(10))));
+
+        // getter without id should return None
+        let cmd = parse_win_command("isMaximized", &Value::Null, None);
+        assert!(cmd.is_none());
+    }
+
+    #[test]
+    fn test_parse_win_command_unknown() {
+        let cmd = parse_win_command("unknownMethod", &Value::Null, None);
+        assert!(cmd.is_none());
     }
 
     #[test]
