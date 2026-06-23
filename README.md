@@ -32,7 +32,6 @@ https://github.com/feitingjun/taowry
   - [应用范围目录](#应用范围目录)
 - [WebView 端 API（taowry/client）](#webview-端-apitaowryclient)
   - [getCurrentWindow](#getcurrentwindow)
-  - [getUtils](#getutils)
   - [defineRPC](#definerpc-client)
 - [getWindow](#getwindow)
 - [defineRPC](#definerpc)
@@ -909,10 +908,10 @@ Utils.getCacheDir()   // ~/Library/Caches/MyApp
 
 ## WebView 端 API（taowry/client）
 
-WebView 端通过 `taowry/client` 子路径导入，提供直接控制当前窗口和调用工具功能，无需经过 RPC 中转，由 Rust 端直接执行。
+WebView 端通过 `taowry/client` 子路径导入，提供直接控制当前窗口的功能，无需经过 RPC 中转，由 Rust 端直接执行。
 
 ```typescript
-import { getCurrentWindow, getUtils, defineRPC } from 'taowry/client'
+import { getCurrentWindow, defineRPC } from 'taowry/client'
 ```
 
 ### getCurrentWindow
@@ -961,41 +960,6 @@ const title = await win.title()
 | 查询 | `size()`, `outerSize()`, `position()`, `outerPosition()`, `title()`, `url()`, `scaleFactor()` |
 
 > 操作类方法同步调用（fire-and-forget），查询类方法返回 Promise。
-
-### getUtils
-
-获取工具接口实例，在 WebView 中直接使用文件对话框、通知等功能。
-
-```typescript
-import { getUtils } from 'taowry/client'
-
-const utils = getUtils()
-
-// 发送通知
-utils.notify('Hello', 'World')
-
-// 选择文件
-const file = await utils.pickFile({
-  filters: [{ name: 'Images', extensions: ['png', 'jpg'] }]
-})
-
-// 打开 URL
-utils.openUrl('https://example.com')
-
-// 消息对话框
-const confirmed = await utils.showMessage({
-  title: '确认',
-  body: '删除此项目？',
-  level: 'warning',
-  buttons: 'yesNo'
-})
-
-// 获取目录
-const desktop = await utils.getDesktopDir()
-const dataDir = await utils.getDataDir()  // 需先设置 appName
-```
-
-> 方法与 Node 端 `Utils` 类完全一致，区别在于所有方法均返回 Promise（因为是异步 IPC 通信）。
 
 ### defineRPC (client)
 
